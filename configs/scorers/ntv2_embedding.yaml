@@ -1,0 +1,4 @@
+scorer:
+  name: ntv2_embedding
+  enabled: true
+  mode: embedding_plus_linear_head

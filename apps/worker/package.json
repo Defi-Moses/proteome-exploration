@@ -1,0 +1,12 @@
+{
+  "name": "@panccre/worker",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.js",
+    "build": "echo 'worker build placeholder'",
+    "test": "echo 'worker tests placeholder'",
+    "lint": "echo 'worker lint placeholder'"
+  }
+}

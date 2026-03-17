@@ -1,64 +1,87 @@
-# Pan-cCRE: Pangenome-Aware Regulatory Element Registry
+# Pan-cCRE Phase-1 Implementation TODOs
 
-This repository contains the project specification for building a public, pangenome-aware registry of human regulatory elements that vary across haplotypes.
+Canonical spec: [PROJECT_SPEC.md](./PROJECT_SPEC.md)
 
-- Full spec: [PROJECT_SPEC.md](./PROJECT_SPEC.md)
+## Working Decisions
 
-## Summary
+- Deployment platform: Railway (primary runtime for API + worker services)
+- Package manager: pnpm (workspace-managed repo tasks)
+- Data backbone: DuckDB + Parquet
+- Scoring strategy: cheap features first, expensive scorers only on shortlist
 
-The project starts from ENCODE cCRE anchors and asks how each element behaves across human haplotypes: conserved, diverged, fractured, absent, duplicated, or locally replaced by inserted sequence. The core output is a reproducible registry and benchmark, not a new foundation model.
+## File Architecture (Scaffolded)
 
-## Core Goals
+```text
+.
+├─ apps/
+│  ├─ api/
+│  └─ worker/
+├─ configs/
+│  ├─ contexts/
+│  └─ scorers/
+├─ data/
+│  ├─ raw/
+│  ├─ interim/
+│  ├─ processed/
+│  └─ registry/
+├─ docs/
+│  └─ schemas/
+├─ notebooks/
+├─ scripts/
+├─ src/panccre/
+│  ├─ cli/ manifests/ ingest/ normalize/ projection/ state_calling/
+│  ├─ candidate_discovery/ features/ scorers/ ranking/ evaluation/
+│  ├─ registry/ api/ reports/ utils/
+├─ tests/
+│  ├─ unit/
+│  ├─ integration/
+│  └─ golden/
+├─ package.json
+├─ pnpm-workspace.yaml
+├─ railway.json
+└─ PROJECT_SPEC.md
+```
 
-- Build an auditable registry of polymorphic cCRE states across haplotypes.
-- Prioritize altered loci by likely functional impact.
-- Validate prioritization using held-out public assay resources (CRISPRi, MPRA, and related labels).
-- Quantify whether scorer disagreement adds signal or reveals failure modes.
+## Ordered Process (Execution Plan)
 
-## Phase-1 Scope
+1. `TODO P0` Bootstrap and guardrails
+- [ ] Freeze source manifest schema and validator.
+- [ ] Implement deterministic run manifests for every pipeline command.
+- [ ] Add schema validation checks that hard-fail on contract drift.
 
-- Human only, GRCh38-anchored, autosomal euchromatic regions.
-- Immune/hematopoietic context only.
-- ENCODE cCREs as anchors with local non-reference candidate discovery near altered loci.
-- CPU-first pipeline with DuckDB + Parquet.
-- Cheap feature extraction at scale; expensive model calls only on shortlist (~10^3–10^4).
+2. `TODO P1` cCRE ingestion and canonical tables
+- [ ] Ingest ENCODE cCRE and materialize `ccre_ref` Parquet.
+- [ ] Normalize coordinate conventions and provenance fields.
+- [ ] Add unit tests for parser and interval normalization.
 
-## Pipeline Shape
+3. `TODO P2` Fixture-first projection
+- [ ] Build chromosome-20 fixture (100 cCREs, 3 haplotypes).
+- [ ] Implement projection into `hap_projection` with QC summaries.
+- [ ] Implement state caller into `ccre_state` with config thresholds.
 
-1. Source manifests and checksums
-2. Normalize reference tables
-3. Project cCREs onto haplotypes
-4. Call altered states
-5. Discover local replacement candidates
-6. Featurize and score (cheap first, expensive on shortlist)
-7. Rank and calibrate
-8. Evaluate with leakage-audited holdouts
-9. Build registry files, API, and reports
+4. `TODO P3` Candidate discovery and cheap features
+- [ ] Discover local replacement candidates for absent/fractured states.
+- [ ] Materialize `replacement_candidate` and `feature_matrix`.
+- [ ] Train/evaluate cheap baseline ranker on fixture.
 
-## Key Design Rules
+5. `TODO P4` Validation and ranking
+- [ ] Join one assay source into `validation_link`.
+- [ ] Implement holdout generation and leakage auditing.
+- [ ] Produce top-k metrics and baseline comparisons.
 
-- Deterministic, versioned transforms with provenance on every derived row.
-- Frozen manifests required for downstream builds.
-- Sequence models are plug-ins, not hard-coded assumptions.
-- No exhaustive expensive-model sweep in phase 1.
-- Evaluation emphasizes publication/locus holdouts (not random row splits).
+6. `TODO P5` Scorer fanout and disagreement
+- [ ] Add open-model scorer adapter.
+- [ ] Implement shortlist routing and AlphaGenome budget enforcement.
+- [ ] Compute disagreement features and ablation results.
 
-## Planned Outputs
+7. `TODO P6` Registry/API/deployment
+- [ ] Build registry artifacts (`polymorphic_ccre_registry.parquet`, etc.).
+- [ ] Expose minimal API endpoints (`/health`, `/ccre/{id}`, `/top_hits`, `/downloads`).
+- [ ] Deploy API and worker services to Railway.
 
-- `polymorphic_ccre_registry.parquet`
-- `replacement_candidates.parquet`
-- `scorer_outputs.parquet`
-- `validation_links.parquet`
-- Schema docs and reproducible benchmark splits
-- Minimal query API and static report figures/tables
+## Immediate Next TODOs (Start Here)
 
-## First Implementation Priorities
-
-1. Implement manifest + source download manager.
-2. Parse and materialize `ccre_ref` Parquet.
-3. Build a chromosome-20 fixture (100 cCREs, 3 haplotypes).
-4. Implement projection + `hap_projection` output.
-5. Implement state caller + `ccre_state` output.
-6. Join one assay source to create `validation_link`.
-7. Build cheap features + baseline ranker.
-8. Integrate AlphaGenome only after the above is working on fixture.
+- [ ] Implement `scripts/build_manifest.py` with manifest schema validation.
+- [ ] Add `ccre_ref` parser + writer in `src/panccre/ingest/`.
+- [ ] Commit a minimal chromosome-20 fixture in `tests/golden/`.
+- [ ] Wire the first end-to-end smoke command in `src/panccre/cli/`.

@@ -1,0 +1,1 @@
+"""ranking module scaffold."""

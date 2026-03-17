@@ -1,0 +1,10 @@
+scorer:
+  name: cheap_baseline
+  enabled: true
+  features:
+    - interval_length
+    - gc_content
+    - cpg_observed_expected
+    - motif_density
+    - repeat_fraction
+    - distance_to_nearest_gene

@@ -1,0 +1,14 @@
+project:
+  id: pan-ccre
+  context_group: immune_hematopoietic
+  genome_build: GRCh38
+  deployment:
+    platform: railway
+  package_manager: pnpm
+
+compute:
+  storage_format: parquet
+  query_engine: duckdb
+  expensive_model_budget:
+    min_calls: 1000
+    max_calls: 10000

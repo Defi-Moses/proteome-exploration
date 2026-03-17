@@ -1,0 +1,14 @@
+{
+  "name": "pan-ccre",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Pangenome-aware registry of polymorphic human cCREs",
+  "packageManager": "pnpm@10.6.2",
+  "scripts": {
+    "lint": "pnpm -r lint",
+    "test": "pnpm -r test",
+    "build": "pnpm -r build",
+    "dev:api": "pnpm --filter @panccre/api dev",
+    "dev:worker": "pnpm --filter @panccre/worker dev"
+  }
+}

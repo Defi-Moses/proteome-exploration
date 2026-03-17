@@ -1,0 +1,1 @@
+"""normalize module scaffold."""

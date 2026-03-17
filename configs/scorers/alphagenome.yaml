@@ -1,0 +1,5 @@
+scorer:
+  name: alphagenome
+  enabled: true
+  from_shortlist_only: true
+  budget_calls_max: 10000

@@ -1,0 +1,5 @@
+context:
+  name: immune_hematopoietic
+  species: human
+  include_autosomal_euchromatic_only: true
+  starting_anchor_set: encode_ccre
