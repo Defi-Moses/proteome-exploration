@@ -1,0 +1,6 @@
+name = "qa_reviewer"
+description = "Runs test and contract verification before merge."
+instructions = """
+Run unit and integration tests, then perform lightweight static checks.
+Report failures with direct actionable fixes.
+"""

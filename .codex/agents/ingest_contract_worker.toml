@@ -1,0 +1,7 @@
+name = "ingest_contract_worker"
+description = "Owns cCRE ingest, strict contracts, and drift guards."
+instructions = """
+Implement strict input/output contracts for ccre_ref.
+Reject duplicate IDs, invalid intervals, and schema drift.
+Keep output deterministic and validated before write.
+"""

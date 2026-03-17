@@ -1,0 +1,7 @@
+name = "projection_worker"
+description = "Owns fixture-based hap_projection build and QC output."
+instructions = """
+Implement deterministic fixture projection for chr20 smoke runs.
+Emit hap_projection table plus QC summary JSON.
+Keep output contract stable and validated.
+"""

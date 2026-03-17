@@ -45,18 +45,18 @@ Canonical spec: [PROJECT_SPEC.md](./PROJECT_SPEC.md)
 ## Ordered Process (Execution Plan)
 
 1. `TODO P0` Bootstrap and guardrails
-- [ ] Freeze source manifest schema and validator.
-- [ ] Implement deterministic run manifests for every pipeline command.
-- [ ] Add schema validation checks that hard-fail on contract drift.
+- [x] Freeze source manifest schema and validator.
+- [x] Implement deterministic run manifests for every pipeline command.
+- [x] Add schema validation checks that hard-fail on contract drift.
 
 2. `TODO P1` cCRE ingestion and canonical tables
-- [ ] Ingest ENCODE cCRE and materialize `ccre_ref` Parquet.
-- [ ] Normalize coordinate conventions and provenance fields.
-- [ ] Add unit tests for parser and interval normalization.
+- [x] Ingest ENCODE cCRE and materialize `ccre_ref` (parquet default, csv/jsonl fallback).
+- [x] Normalize coordinate conventions and provenance fields.
+- [x] Add unit tests for parser and interval normalization.
 
 3. `TODO P2` Fixture-first projection
-- [ ] Build chromosome-20 fixture (100 cCREs, 3 haplotypes).
-- [ ] Implement projection into `hap_projection` with QC summaries.
+- [x] Build chromosome-20 fixture (100 cCREs, 3 haplotypes).
+- [x] Implement projection into `hap_projection` with QC summaries.
 - [ ] Implement state caller into `ccre_state` with config thresholds.
 
 4. `TODO P3` Candidate discovery and cheap features

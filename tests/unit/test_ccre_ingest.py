@@ -7,7 +7,13 @@ import unittest
 
 import pandas as pd
 
-from panccre.ingest.ccre import ingest_ccre_ref, parse_ccre_bed
+from panccre.ingest.ccre import (
+    CCRE_REF_COLUMNS,
+    ingest_ccre_ref,
+    parse_ccre_bed,
+    read_ccre_ref,
+    validate_ccre_ref_frame,
+)
 
 FIXTURE_BED = Path(__file__).resolve().parents[1] / "golden" / "chr20" / "encode_ccre_chr20_fixture.bed"
 
@@ -45,6 +51,10 @@ class CCREIngestTests(unittest.TestCase):
             first = json.loads(lines[0])
             self.assertEqual(first["context_group"], "immune_hematopoietic")
 
+            frame = read_ccre_ref(output_path, input_format="jsonl")
+            self.assertEqual(frame.shape[0], 100)
+            self.assertEqual(list(frame.columns), CCRE_REF_COLUMNS)
+
     def test_ingest_ccre_ref_csv(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             output_path = Path(tmpdir) / "ccre_ref.csv"
@@ -76,6 +86,45 @@ class CCREIngestTests(unittest.TestCase):
                 self.assertTrue(output_path.exists())
             except RuntimeError as exc:
                 self.assertIn("Parquet output requires", str(exc))
+
+    def test_parse_rejects_duplicate_ccre_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bed = Path(tmpdir) / "dup.bed"
+            bed.write_text(
+                "chr20\t100\t120\tEH38E000001\t0\t+\tpELS\t3\n"
+                "chr20\t200\t220\tEH38E000001\t0\t+\tpELS\t4\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(ValueError):
+                parse_ccre_bed(bed, context_group="immune_hematopoietic", source_release="fixture")
+
+    def test_parse_rejects_invalid_strand(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bed = Path(tmpdir) / "bad_strand.bed"
+            bed.write_text("chr20\t100\t120\tEH38E000001\t0\t*\tpELS\t3\n", encoding="utf-8")
+            with self.assertRaises(ValueError):
+                parse_ccre_bed(bed, context_group="immune_hematopoietic", source_release="fixture")
+
+    def test_validate_ccre_ref_frame_rejects_contract_drift(self) -> None:
+        frame = pd.DataFrame(
+            [
+                {
+                    "ccre_id": "EH38E000001",
+                    "chr": "chr20",
+                    "start": 100,
+                    "end": 120,
+                    "strand": "+",
+                    "ccre_class": "pELS",
+                    "biosample_count": 1,
+                    "context_group": "immune_hematopoietic",
+                    "anchor_width": 20,
+                    "source_release": "fixture",
+                }
+            ]
+        )
+        frame = frame.drop(columns=["source_release"])
+        with self.assertRaises(ValueError):
+            validate_ccre_ref_frame(frame)
 
 
 if __name__ == "__main__":
