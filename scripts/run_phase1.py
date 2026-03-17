@@ -1,5 +1,18 @@
 #!/usr/bin/env python3
-"""Stub for phase-1 pipeline orchestrator."""
+"""Wrapper for pan-ccre CLI commands."""
+
+from __future__ import annotations
+
+from pathlib import Path
+import sys
+
+ROOT = Path(__file__).resolve().parents[1]
+SRC = ROOT / "src"
+if str(SRC) not in sys.path:
+    sys.path.insert(0, str(SRC))
+
+from panccre.cli.main import main
+
 
 if __name__ == "__main__":
-    raise SystemExit("Not implemented: run phase 1")
+    raise SystemExit(main())

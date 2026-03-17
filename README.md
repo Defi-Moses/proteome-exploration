@@ -81,7 +81,7 @@ Canonical spec: [PROJECT_SPEC.md](./PROJECT_SPEC.md)
 
 ## Immediate Next TODOs (Start Here)
 
-- [ ] Implement `scripts/build_manifest.py` with manifest schema validation.
-- [ ] Add `ccre_ref` parser + writer in `src/panccre/ingest/`.
-- [ ] Commit a minimal chromosome-20 fixture in `tests/golden/`.
-- [ ] Wire the first end-to-end smoke command in `src/panccre/cli/`.
+- [x] Implement `scripts/build_manifest.py` with manifest schema validation.
+- [x] Add `ccre_ref` parser + writer in `src/panccre/ingest/`.
+- [x] Commit a minimal chromosome-20 fixture in `tests/golden/`.
+- [x] Wire the first end-to-end smoke command in `src/panccre/cli/`.
