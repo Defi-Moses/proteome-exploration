@@ -57,17 +57,17 @@ Canonical spec: [PROJECT_SPEC.md](./PROJECT_SPEC.md)
 3. `TODO P2` Fixture-first projection
 - [x] Build chromosome-20 fixture (100 cCREs, 3 haplotypes).
 - [x] Implement projection into `hap_projection` with QC summaries.
-- [ ] Implement state caller into `ccre_state` with config thresholds.
+- [x] Implement state caller into `ccre_state` with config thresholds.
 
 4. `TODO P3` Candidate discovery and cheap features
-- [ ] Discover local replacement candidates for absent/fractured states.
-- [ ] Materialize `replacement_candidate` and `feature_matrix`.
-- [ ] Train/evaluate cheap baseline ranker on fixture.
+- [x] Discover local replacement candidates for absent/fractured states.
+- [x] Materialize `replacement_candidate` and `feature_matrix`.
+- [x] Train/evaluate cheap baseline ranker on fixture.
 
 5. `TODO P4` Validation and ranking
-- [ ] Join one assay source into `validation_link`.
-- [ ] Implement holdout generation and leakage auditing.
-- [ ] Produce top-k metrics and baseline comparisons.
+- [x] Join one assay source into `validation_link`.
+- [x] Implement holdout generation and leakage auditing.
+- [x] Produce top-k metrics and baseline comparisons.
 
 6. `TODO P5` Scorer fanout and disagreement
 - [ ] Add open-model scorer adapter.
