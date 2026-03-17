@@ -5,7 +5,10 @@ from __future__ import annotations
 import argparse
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
+
+import yaml
 
 from panccre.candidate_discovery import run_candidate_discovery
 from panccre.evaluation import run_holdout_build, run_validation_link_build
@@ -21,6 +24,13 @@ from panccre.manifests import (
 )
 from panccre.projection import project_fixture_haplotypes
 from panccre.ranking import run_ranking_evaluation
+from panccre.registry import run_registry_build
+from panccre.scorers import (
+    run_disagreement_ablation,
+    run_disagreement_build,
+    run_scorer_fanout,
+    run_shortlist_build,
+)
 from panccre.state_calling import call_states_from_projection
 
 
@@ -28,11 +38,32 @@ def _repo_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
 
+def _load_alphagenome_budget(default_value: int = 10000) -> int:
+    config_path = _repo_root() / "configs" / "project.yaml"
+    if not config_path.exists():
+        return default_value
+
+    payload = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        return default_value
+
+    compute = payload.get("compute")
+    if not isinstance(compute, dict):
+        return default_value
+
+    budget = compute.get("expensive_model_budget")
+    if not isinstance(budget, dict):
+        return default_value
+
+    max_calls = budget.get("max_calls")
+    if isinstance(max_calls, int) and max_calls > 0:
+        return max_calls
+
+    return default_value
+
+
 def _add_fetch_source_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
-    parser = subparsers.add_parser(
-        "fetch-source",
-        help="Download source artifact and update manifest + lockfile",
-    )
+    parser = subparsers.add_parser("fetch-source", help="Download source artifact and update manifest + lockfile")
     parser.add_argument("--download-url", required=True)
     parser.add_argument("--source-id", required=True)
     parser.add_argument("--version", required=True)
@@ -135,9 +166,76 @@ def _add_ranking_parser(subparsers: argparse._SubParsersAction[argparse.Argument
     parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "processed" / "ranking"))
 
 
+def _add_shortlist_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser("shortlist", help="Build shortlist for expensive scorers")
+    parser.add_argument("--feature-matrix", default=str(_repo_root() / "data" / "processed" / "features" / "feature_matrix.jsonl"))
+    parser.add_argument("--feature-matrix-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--top", type=int, default=10000)
+    parser.add_argument("--output-format", choices=["parquet", "csv", "jsonl"], default="jsonl")
+    parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "processed" / "scorers"))
+
+
+def _add_scorer_fanout_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser("score-fanout", help="Run cheap/open scorers and AlphaGenome on shortlist")
+    parser.add_argument("--feature-matrix", default=str(_repo_root() / "data" / "processed" / "features" / "feature_matrix.jsonl"))
+    parser.add_argument("--feature-matrix-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--shortlist", default=str(_repo_root() / "data" / "processed" / "scorers" / "shortlist.jsonl"))
+    parser.add_argument("--shortlist-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--context-group", default="immune_hematopoietic")
+    parser.add_argument("--max-alphagenome-calls", type=int, default=None)
+    parser.add_argument("--run-id", default=None)
+    parser.add_argument("--output-format", choices=["parquet", "csv", "jsonl"], default="jsonl")
+    parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "processed" / "scorers"))
+
+
+def _add_disagreement_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser("compute-disagreement", help="Compute cross-scorer disagreement features")
+    parser.add_argument("--scorer-outputs", default=str(_repo_root() / "data" / "processed" / "scorers" / "scorer_outputs.jsonl"))
+    parser.add_argument("--scorer-outputs-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--feature-version", default="v1")
+    parser.add_argument("--output-format", choices=["parquet", "csv", "jsonl"], default="jsonl")
+    parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "processed" / "scorers"))
+
+
+def _add_ablation_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser("run-ablations", help="Run ablations with and without disagreement features")
+    parser.add_argument("--feature-matrix", default=str(_repo_root() / "data" / "processed" / "features" / "feature_matrix.jsonl"))
+    parser.add_argument("--feature-matrix-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--disagreement-features", default=str(_repo_root() / "data" / "processed" / "scorers" / "disagreement_features.jsonl"))
+    parser.add_argument("--disagreement-features-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--publication-validation", default=str(_repo_root() / "data" / "processed" / "validation" / "validation_link_publication.jsonl"))
+    parser.add_argument("--publication-validation-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--locus-validation", default=str(_repo_root() / "data" / "processed" / "validation" / "validation_link_locus.jsonl"))
+    parser.add_argument("--locus-validation-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "processed" / "ranking"))
+
+
+def _add_registry_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser("build-registry", help="Build registry artifacts from processed outputs")
+    parser.add_argument("--ccre-state", default=str(_repo_root() / "data" / "processed" / "state" / "ccre_state.jsonl"))
+    parser.add_argument("--ccre-state-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--replacement-candidates", default=str(_repo_root() / "data" / "processed" / "candidates" / "replacement_candidates.jsonl"))
+    parser.add_argument("--replacement-candidates-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--scorer-outputs", default=str(_repo_root() / "data" / "processed" / "scorers" / "scorer_outputs.jsonl"))
+    parser.add_argument("--scorer-outputs-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--validation-links", default=str(_repo_root() / "data" / "processed" / "validation" / "validation_link.jsonl"))
+    parser.add_argument("--validation-links-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--output-format", choices=["parquet", "csv", "jsonl"], default="jsonl")
+    parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "registry"))
+    parser.add_argument("--context-group", default="immune_hematopoietic")
+
+
+def _add_serve_api_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser("serve-api", help="Serve registry API")
+    parser.add_argument("--registry-dir", default=str(_repo_root() / "data" / "registry"))
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8000)
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="pan-ccre CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
+
     _add_fetch_source_parser(subparsers)
     _add_ingest_parser(subparsers)
     _add_smoke_parser(subparsers)
@@ -148,6 +246,14 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_validation_parser(subparsers)
     _add_holdout_parser(subparsers)
     _add_ranking_parser(subparsers)
+
+    _add_shortlist_parser(subparsers)
+    _add_scorer_fanout_parser(subparsers)
+    _add_disagreement_parser(subparsers)
+    _add_ablation_parser(subparsers)
+
+    _add_registry_parser(subparsers)
+    _add_serve_api_parser(subparsers)
     return parser
 
 
@@ -164,7 +270,14 @@ def _artifact_extension(output_format: str) -> str:
     return "parquet"
 
 
-def _write_run_manifest(command_name: str, output_dir: Path, inputs: dict[str, object], params: dict[str, object], outputs: dict[str, object], row_count: int | None = None) -> Path:
+def _write_run_manifest(
+    command_name: str,
+    output_dir: Path,
+    inputs: dict[str, object],
+    params: dict[str, object],
+    outputs: dict[str, object],
+    row_count: int | None = None,
+) -> Path:
     payload: dict[str, object] = {
         "command": command_name,
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
@@ -220,7 +333,17 @@ def _handle_fetch_source(args: argparse.Namespace) -> int:
     return 0
 
 
-def _run_ingest(*, input_bed: str, manifest_path: str | None, output_dir: str, context_group: str, source_release: str, output_format: str, explicit_output: str | None, command_name: str) -> int:
+def _run_ingest(
+    *,
+    input_bed: str,
+    manifest_path: str | None,
+    output_dir: str,
+    context_group: str,
+    source_release: str,
+    output_format: str,
+    explicit_output: str | None,
+    command_name: str,
+) -> int:
     bed_path = Path(input_bed)
     if not bed_path.exists():
         raise FileNotFoundError(f"Input BED not found: {bed_path}")
@@ -522,14 +645,8 @@ def _handle_evaluate_ranking(args: argparse.Namespace) -> int:
     _write_json(
         comparison_path,
         {
-            "publication": {
-                "top_k": pub_metrics.get("top_k", {}),
-                "pr_auc": pub_metrics.get("pr_auc", {}),
-            },
-            "locus": {
-                "top_k": loc_metrics.get("top_k", {}),
-                "pr_auc": loc_metrics.get("pr_auc", {}),
-            },
+            "publication": {"top_k": pub_metrics.get("top_k", {}), "pr_auc": pub_metrics.get("pr_auc", {})},
+            "locus": {"top_k": loc_metrics.get("top_k", {}), "pr_auc": loc_metrics.get("pr_auc", {})},
         },
     )
 
@@ -560,6 +677,226 @@ def _handle_evaluate_ranking(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_shortlist(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir)
+    extension = _artifact_extension(args.output_format)
+    output_path = output_dir / f"shortlist.{extension}"
+
+    result = run_shortlist_build(
+        feature_matrix_path=args.feature_matrix,
+        feature_matrix_format=args.feature_matrix_format,
+        output_path=output_path,
+        output_format=args.output_format,
+        top_n=args.top,
+    )
+
+    run_manifest_path = _write_run_manifest(
+        command_name="shortlist",
+        output_dir=output_dir,
+        inputs={"feature_matrix": str(Path(args.feature_matrix).resolve())},
+        params={"feature_matrix_format": args.feature_matrix_format, "top": args.top, "output_format": args.output_format},
+        outputs={"shortlist": str(result.output_path.resolve())},
+        row_count=result.row_count,
+    )
+
+    print(f"shortlist_complete rows={result.row_count} output={result.output_path}")
+    print(f"run_manifest={run_manifest_path}")
+    return 0
+
+
+def _handle_score_fanout(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir)
+    extension = _artifact_extension(args.output_format)
+    output_path = output_dir / f"scorer_outputs.{extension}"
+
+    budget = args.max_alphagenome_calls if args.max_alphagenome_calls is not None else _load_alphagenome_budget()
+
+    result = run_scorer_fanout(
+        feature_matrix_path=args.feature_matrix,
+        feature_matrix_format=args.feature_matrix_format,
+        shortlist_path=args.shortlist,
+        shortlist_format=args.shortlist_format,
+        output_path=output_path,
+        output_format=args.output_format,
+        context_group=args.context_group,
+        max_alphagenome_calls=budget,
+        run_id=args.run_id,
+    )
+
+    run_manifest_path = _write_run_manifest(
+        command_name="score-fanout",
+        output_dir=output_dir,
+        inputs={"feature_matrix": str(Path(args.feature_matrix).resolve()), "shortlist": str(Path(args.shortlist).resolve())},
+        params={
+            "feature_matrix_format": args.feature_matrix_format,
+            "shortlist_format": args.shortlist_format,
+            "context_group": args.context_group,
+            "max_alphagenome_calls": budget,
+            "run_id": args.run_id,
+            "output_format": args.output_format,
+        },
+        outputs={"scorer_outputs": str(result.output_path.resolve())},
+        row_count=result.row_count,
+    )
+
+    print(f"score-fanout_complete rows={result.row_count} output={result.output_path}")
+    print(f"alphagenome_calls={result.alphagenome_calls}")
+    print(f"run_manifest={run_manifest_path}")
+    return 0
+
+
+def _handle_compute_disagreement(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir)
+    extension = _artifact_extension(args.output_format)
+    output_path = output_dir / f"disagreement_features.{extension}"
+
+    result = run_disagreement_build(
+        scorer_output_path=args.scorer_outputs,
+        scorer_output_format=args.scorer_outputs_format,
+        output_path=output_path,
+        output_format=args.output_format,
+        feature_version=args.feature_version,
+    )
+
+    run_manifest_path = _write_run_manifest(
+        command_name="compute-disagreement",
+        output_dir=output_dir,
+        inputs={"scorer_outputs": str(Path(args.scorer_outputs).resolve())},
+        params={
+            "scorer_outputs_format": args.scorer_outputs_format,
+            "feature_version": args.feature_version,
+            "output_format": args.output_format,
+        },
+        outputs={"disagreement_features": str(result.output_path.resolve())},
+        row_count=result.row_count,
+    )
+
+    print(f"compute-disagreement_complete rows={result.row_count} output={result.output_path}")
+    print(f"run_manifest={run_manifest_path}")
+    return 0
+
+
+def _handle_run_ablations(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pub_report = output_dir / "disagreement_ablation_publication.json"
+    loc_report = output_dir / "disagreement_ablation_locus.json"
+
+    run_disagreement_ablation(
+        feature_matrix_path=args.feature_matrix,
+        feature_matrix_format=args.feature_matrix_format,
+        validation_link_path=args.publication_validation,
+        validation_link_format=args.publication_validation_format,
+        disagreement_path=args.disagreement_features,
+        disagreement_format=args.disagreement_features_format,
+        report_output_path=pub_report,
+    )
+
+    run_disagreement_ablation(
+        feature_matrix_path=args.feature_matrix,
+        feature_matrix_format=args.feature_matrix_format,
+        validation_link_path=args.locus_validation,
+        validation_link_format=args.locus_validation_format,
+        disagreement_path=args.disagreement_features,
+        disagreement_format=args.disagreement_features_format,
+        report_output_path=loc_report,
+    )
+
+    pub_payload = json.loads(pub_report.read_text(encoding="utf-8"))
+    loc_payload = json.loads(loc_report.read_text(encoding="utf-8"))
+
+    summary_path = output_dir / "disagreement_ablation_summary.json"
+    _write_json(
+        summary_path,
+        {
+            "publication": pub_payload.get("lift", {}),
+            "locus": loc_payload.get("lift", {}),
+        },
+    )
+
+    run_manifest_path = _write_run_manifest(
+        command_name="run-ablations",
+        output_dir=output_dir,
+        inputs={
+            "feature_matrix": str(Path(args.feature_matrix).resolve()),
+            "disagreement_features": str(Path(args.disagreement_features).resolve()),
+            "publication_validation": str(Path(args.publication_validation).resolve()),
+            "locus_validation": str(Path(args.locus_validation).resolve()),
+        },
+        params={
+            "feature_matrix_format": args.feature_matrix_format,
+            "disagreement_features_format": args.disagreement_features_format,
+            "publication_validation_format": args.publication_validation_format,
+            "locus_validation_format": args.locus_validation_format,
+        },
+        outputs={
+            "publication_report": str(pub_report.resolve()),
+            "locus_report": str(loc_report.resolve()),
+            "summary": str(summary_path.resolve()),
+        },
+    )
+
+    print(f"run-ablations_complete summary={summary_path}")
+    print(f"run_manifest={run_manifest_path}")
+    return 0
+
+
+def _handle_build_registry(args: argparse.Namespace) -> int:
+    result = run_registry_build(
+        ccre_state_path=args.ccre_state,
+        ccre_state_format=args.ccre_state_format,
+        replacement_candidates_path=args.replacement_candidates,
+        replacement_candidates_format=args.replacement_candidates_format,
+        scorer_output_path=args.scorer_outputs,
+        scorer_output_format=args.scorer_outputs_format,
+        validation_link_path=args.validation_links,
+        validation_link_format=args.validation_links_format,
+        output_dir=args.output_dir,
+        output_format=args.output_format,
+        context_group=args.context_group,
+    )
+
+    output_dir = Path(args.output_dir)
+    run_manifest_path = _write_run_manifest(
+        command_name="build-registry",
+        output_dir=output_dir,
+        inputs={
+            "ccre_state": str(Path(args.ccre_state).resolve()),
+            "replacement_candidates": str(Path(args.replacement_candidates).resolve()),
+            "scorer_outputs": str(Path(args.scorer_outputs).resolve()),
+            "validation_links": str(Path(args.validation_links).resolve()),
+        },
+        params={
+            "ccre_state_format": args.ccre_state_format,
+            "replacement_candidates_format": args.replacement_candidates_format,
+            "scorer_outputs_format": args.scorer_outputs_format,
+            "validation_links_format": args.validation_links_format,
+            "output_format": args.output_format,
+            "context_group": args.context_group,
+        },
+        outputs={
+            "registry_manifest": str((output_dir / "registry_manifest.json").resolve()),
+            "registry_dir": str(result.output_dir.resolve()),
+        },
+        row_count=result.registry_rows,
+    )
+
+    print(f"build-registry_complete rows={result.registry_rows} output_dir={result.output_dir}")
+    print(f"run_manifest={run_manifest_path}")
+    return 0
+
+
+def _handle_serve_api(args: argparse.Namespace) -> int:
+    os.environ["PANCCRE_REGISTRY_DIR"] = str(Path(args.registry_dir).resolve())
+    from panccre.api import create_app  # local import keeps CLI lightweight for non-API commands
+    import uvicorn
+
+    app = create_app(registry_dir=args.registry_dir)
+    uvicorn.run(app, host=args.host, port=int(args.port))
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -584,6 +921,20 @@ def main(argv: list[str] | None = None) -> int:
         return _handle_build_holdouts(args)
     if args.command == "evaluate-ranking":
         return _handle_evaluate_ranking(args)
+
+    if args.command == "shortlist":
+        return _handle_shortlist(args)
+    if args.command == "score-fanout":
+        return _handle_score_fanout(args)
+    if args.command == "compute-disagreement":
+        return _handle_compute_disagreement(args)
+    if args.command == "run-ablations":
+        return _handle_run_ablations(args)
+
+    if args.command == "build-registry":
+        return _handle_build_registry(args)
+    if args.command == "serve-api":
+        return _handle_serve_api(args)
 
     parser.error(f"Unsupported command: {args.command}")
     return 2

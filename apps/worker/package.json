@@ -2,11 +2,11 @@
   "name": "@panccre/worker",
   "private": true,
   "version": "0.1.0",
-  "type": "module",
   "scripts": {
-    "dev": "node src/index.js",
-    "build": "echo 'worker build placeholder'",
-    "test": "echo 'worker tests placeholder'",
+    "dev": "PYTHONPATH=../../src python3 -m panccre.worker.main",
+    "start": "PYTHONPATH=../../src python3 -m panccre.worker.main",
+    "build": "echo 'worker build: python runtime (no compile step)'",
+    "test": "PYTHONPATH=../../src python3 -m unittest -q",
     "lint": "echo 'worker lint placeholder'"
   }
 }

@@ -1,0 +1,7 @@
+[build]
+builder = "NIXPACKS"
+
+[deploy]
+startCommand = "pnpm --filter @panccre/worker start"
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 10

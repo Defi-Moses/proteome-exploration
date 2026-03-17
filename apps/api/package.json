@@ -2,11 +2,11 @@
   "name": "@panccre/api",
   "private": true,
   "version": "0.1.0",
-  "type": "module",
   "scripts": {
-    "dev": "node src/index.js",
-    "build": "echo 'api build placeholder'",
-    "test": "echo 'api tests placeholder'",
+    "dev": "PYTHONPATH=../../src python3 -m uvicorn panccre.api.server:app --host 0.0.0.0 --port ${PORT:-8000} --reload",
+    "start": "PYTHONPATH=../../src python3 -m uvicorn panccre.api.server:app --host 0.0.0.0 --port ${PORT:-8000}",
+    "build": "echo 'api build: python runtime (no compile step)'",
+    "test": "PYTHONPATH=../../src python3 -m unittest -q",
     "lint": "echo 'api lint placeholder'"
   }
 }

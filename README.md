@@ -70,14 +70,14 @@ Canonical spec: [PROJECT_SPEC.md](./PROJECT_SPEC.md)
 - [x] Produce top-k metrics and baseline comparisons.
 
 6. `TODO P5` Scorer fanout and disagreement
-- [ ] Add open-model scorer adapter.
-- [ ] Implement shortlist routing and AlphaGenome budget enforcement.
-- [ ] Compute disagreement features and ablation results.
+- [x] Add open-model scorer adapter.
+- [x] Implement shortlist routing and AlphaGenome budget enforcement.
+- [x] Compute disagreement features and ablation results.
 
 7. `TODO P6` Registry/API/deployment
-- [ ] Build registry artifacts (`polymorphic_ccre_registry.parquet`, etc.).
-- [ ] Expose minimal API endpoints (`/health`, `/ccre/{id}`, `/top_hits`, `/downloads`).
-- [ ] Deploy API and worker services to Railway.
+- [x] Build registry artifacts (`polymorphic_ccre_registry.parquet`, etc.).
+- [x] Expose minimal API endpoints (`/health`, `/ccre/{id}`, `/top_hits`, `/downloads`).
+- [x] Prepare Railway deployment configs for API and worker services.
 
 ## Immediate Next TODOs (Start Here)
 
