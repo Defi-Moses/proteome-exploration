@@ -1,0 +1,15 @@
+# Environment files
+.env
+.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Node / package managers
+node_modules/
+.pnpm-store/
+
+# OS / editor
+.DS_Store

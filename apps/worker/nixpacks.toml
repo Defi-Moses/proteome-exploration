@@ -1,0 +1,18 @@
+[variables]
+PYTHONUNBUFFERED = "1"
+PIP_NO_CACHE_DIR = "1"
+
+[phases.setup]
+nixPkgs = [
+  "nodejs_18",
+  "pnpm",
+  "python311",
+  "python311Packages.pip",
+]
+
+[phases.install]
+cmds = [
+  "npm install -g corepack@0.24.1 && corepack enable",
+  "pnpm i --frozen-lockfile",
+  "pip3 install --break-system-packages --no-cache-dir 'fastapi>=0.110' 'uvicorn>=0.30' 'pyyaml>=6.0'",
+]

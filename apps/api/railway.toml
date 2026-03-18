@@ -1,8 +1,9 @@
 [build]
 builder = "NIXPACKS"
+buildCommand = "pnpm --filter @panccre/api build"
 
 [deploy]
-startCommand = "pnpm --filter @panccre/api start"
+startCommand = "PYTHONPATH=/app/src python3 -m uvicorn panccre.api.server:app --host 0.0.0.0 --port $PORT"
 healthcheckPath = "/health"
 healthcheckTimeout = 120
 restartPolicyType = "ON_FAILURE"

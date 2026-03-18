@@ -3,10 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "scripts": {
-    "dev": "PYTHONPATH=../../src python3 -m panccre.worker.main",
-    "start": "PYTHONPATH=../../src python3 -m panccre.worker.main",
+    "dev": "PYTHONPATH=${PYTHONPATH:+$PYTHONPATH:}/app/src:../../src python3 -m panccre.worker.main",
+    "start": "PYTHONPATH=${PYTHONPATH:+$PYTHONPATH:}/app/src:../../src python3 -m panccre.worker.main",
     "build": "echo 'worker build: python runtime (no compile step)'",
-    "test": "PYTHONPATH=../../src python3 -m unittest -q",
+    "test": "PYTHONPATH=${PYTHONPATH:+$PYTHONPATH:}/app/src:../../src python3 -m unittest -q",
     "lint": "echo 'worker lint placeholder'"
   }
 }
