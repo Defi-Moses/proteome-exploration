@@ -135,6 +135,16 @@ python3 scripts/run_phase1.py \
   --output-format jsonl
 ```
 
+6. Optional: build a real Engreitz-based assay source CSV for worker validation-link:
+
+```bash
+python3 scripts/prepare_engreitz_assay_source.py \
+  --source-tsv-gz /data/raw/engreitz_crispri_heldout5/2026-03-19/source.tsv.gz \
+  --ccre-bed /data/raw/encode_ccre_v4/2026-01/GRCh38-cCREs.bed \
+  --haplotypes /data/config/haplotypes/hprc_phase1_subset.tsv \
+  --output-csv /data/raw/engreitz_crispri_heldout5/2026-03-19/panccre_assay_labels.csv
+```
+
 See also: [docs/real_data_onboarding.md](./docs/real_data_onboarding.md)
 
 ## Operational Docs

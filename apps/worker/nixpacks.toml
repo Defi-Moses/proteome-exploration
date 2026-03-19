@@ -8,6 +8,7 @@ nixPkgs = [
   "pnpm",
   "python311",
   "python311Packages.pip",
+  "bedtools",
 ]
 
 [phases.install]

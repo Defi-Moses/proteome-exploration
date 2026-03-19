@@ -57,6 +57,7 @@ This repository uses two Railway services:
 - Service commands set `PYTHONPATH=/app/src` directly, so no extra path env var is required.
 - `pnpm` remains the workspace package manager for service scripts.
 - `apps/api/nixpacks.toml` and `apps/worker/nixpacks.toml` install both Node/pnpm and Python runtime dependencies.
+- Root `nixpacks.toml` setup includes `bedtools` so `scripts/prepare_engreitz_assay_source.py` can run on Railway worker shells.
 - Railway watch patterns include `/src/**`, `/scripts/**`, and `/configs/**` so shared pipeline code changes trigger service rebuilds.
 
 ## Railway storage setup
@@ -84,6 +85,8 @@ Set these on `@panccre/worker`:
 - `PANCCRE_PIPELINE_PROJECTION_MODE=vcf`
 - `PANCCRE_PIPELINE_VARIANTS=/data/raw/pangenome_haplotype_alignments/1.1/hprc-v1.1-mc-grch38.vcfbub.a100k.wave.vcf.gz`
 - `PANCCRE_PIPELINE_HAPLOTYPES=/data/config/haplotypes/hprc_phase1_subset.tsv`
+- `PANCCRE_PIPELINE_ASSAY_SOURCE=/data/raw/engreitz_crispri_heldout5/2026-03-19/panccre_assay_labels.csv`
+- `PANCCRE_PIPELINE_ASSAY_SOURCE_FORMAT=csv`
 - `PANCCRE_REGISTRY_PUBLISH_MODE=api_sync`
 - `PANCCRE_REGISTRY_SYNC_TOKEN=<shared-secret>`
 - `PANCCRE_FREEZE_EVALUATION=1`
@@ -97,3 +100,9 @@ Set this on `@panccre/api`:
 
 With `api_sync`, worker uploads a tarred registry payload to API internal endpoint
 `/internal/registry/sync`; API atomically publishes it into its own mounted `/data/registry`.
+
+Before enabling a real assay source, prepare it with:
+
+- `python3 scripts/prepare_engreitz_assay_source.py ...`
+
+This normalization path uses `bedtools intersect` and emits a strict contract CSV plus reject/summary sidecars.

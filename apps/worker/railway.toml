@@ -1,6 +1,6 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "pip3 install --break-system-packages --no-cache-dir 'numpy>=1.26' 'pandas>=2.0' 'pyarrow>=16.0' && pnpm --filter @panccre/worker build"
+buildCommand = "pnpm --filter @panccre/worker build"
 watchPatterns = ["/apps/worker/**", "/src/**", "/scripts/**", "/configs/**", "/tests/golden/**", "/pyproject.toml", "/nixpacks.toml"]
 
 [deploy]

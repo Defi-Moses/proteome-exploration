@@ -42,6 +42,16 @@ Remaining blockers:
    `configs/sources/phase1_sources.yaml` (intentional until access/quality is confirmed).
 3. Projection/state thresholds are heuristic and still need biological calibration.
 
+Assay blocker resolution path:
+
+- Normalize Engreitz heldout benchmark with:
+  `python3 scripts/prepare_engreitz_assay_source.py ...`
+- Use the same cCRE BED as worker ingest:
+  `/data/raw/encode_ccre_v4/2026-01/GRCh38-cCREs.bed`
+- Use the same projection haplotype list:
+  `/data/config/haplotypes/hprc_phase1_subset.tsv`
+- Point worker to generated CSV via `PANCCRE_PIPELINE_ASSAY_SOURCE`.
+
 ## Practical next run settings
 
 For a realistic non-fixture run, set these worker vars first:
