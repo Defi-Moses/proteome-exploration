@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import http.client
 import json
 import os
 from pathlib import Path
 import shutil
 import subprocess
+import tarfile
+import tempfile
 import time
+from urllib.parse import urlparse
 
 
 def _utc_now() -> str:
@@ -116,6 +120,104 @@ def _publish_registry_atomically(*, source_registry_dir: Path, target_registry_d
     _remove_dir_if_exists(prev_dir)
 
 
+def _default_api_sync_url() -> str:
+    explicit = os.environ.get("PANCCRE_API_SYNC_URL", "").strip()
+    if explicit:
+        return explicit
+
+    linked_domain = os.environ.get("RAILWAY_SERVICE__PANCCRE_API_URL", "").strip()
+    if linked_domain:
+        return f"https://{linked_domain}/internal/registry/sync"
+    return ""
+
+
+def _create_registry_archive(*, source_registry_dir: Path, archive_path: Path) -> None:
+    archive_path.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(archive_path, mode="w:gz") as handle:
+        handle.add(source_registry_dir, arcname="registry")
+
+
+def _post_archive_to_api(*, sync_url: str, archive_path: Path, run_tag: str) -> None:
+    parsed = urlparse(sync_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise ValueError(f"PANCCRE_API_SYNC_URL must start with http:// or https:// (got {sync_url})")
+    if not parsed.netloc:
+        raise ValueError(f"PANCCRE_API_SYNC_URL missing host: {sync_url}")
+
+    sync_token = os.environ.get("PANCCRE_REGISTRY_SYNC_TOKEN", "").strip()
+    if not sync_token:
+        raise ValueError("PANCCRE_REGISTRY_SYNC_TOKEN is required for API registry sync")
+
+    target_path = parsed.path or "/internal/registry/sync"
+    if parsed.query:
+        target_path = f"{target_path}?{parsed.query}"
+
+    archive_size = archive_path.stat().st_size
+    if parsed.scheme == "https":
+        connection: http.client.HTTPConnection = http.client.HTTPSConnection(parsed.netloc, timeout=300)
+    else:
+        connection = http.client.HTTPConnection(parsed.netloc, timeout=300)
+
+    try:
+        connection.putrequest("POST", target_path)
+        connection.putheader("Content-Type", "application/gzip")
+        connection.putheader("Content-Length", str(archive_size))
+        connection.putheader("X-PANCCRE-SYNC-TOKEN", sync_token)
+        connection.putheader("X-PANCCRE-RUN-TAG", run_tag)
+        connection.endheaders()
+
+        with archive_path.open("rb") as handle:
+            while True:
+                chunk = handle.read(1024 * 1024)
+                if not chunk:
+                    break
+                connection.send(chunk)
+
+        response = connection.getresponse()
+        payload = response.read().decode("utf-8", errors="replace")
+        if response.status >= 300:
+            raise RuntimeError(
+                f"registry API sync failed status={response.status} reason={response.reason} payload={payload}"
+            )
+    finally:
+        connection.close()
+
+
+def _publish_registry_via_api(*, source_registry_dir: Path, run_tag: str) -> None:
+    sync_url = _default_api_sync_url()
+    if not sync_url:
+        raise ValueError(
+            "PANCCRE_API_SYNC_URL is not set and Railway API domain not available "
+            "(RAILWAY_SERVICE__PANCCRE_API_URL)"
+        )
+
+    with tempfile.TemporaryDirectory(prefix="panccre_registry_sync_") as tmpdir:
+        archive_path = Path(tmpdir) / "registry_payload.tar.gz"
+        _create_registry_archive(source_registry_dir=source_registry_dir, archive_path=archive_path)
+        _post_archive_to_api(sync_url=sync_url, archive_path=archive_path, run_tag=run_tag)
+
+    _log("worker_pipeline_publish_api_complete", sync_url=sync_url, run_tag=run_tag)
+
+
+def _publish_registry(*, source_registry_dir: Path, target_registry_dir: Path, run_tag: str) -> None:
+    mode = os.environ.get("PANCCRE_REGISTRY_PUBLISH_MODE", "local").strip().lower()
+    if mode not in {"local", "api_sync", "dual"}:
+        raise ValueError(
+            "PANCCRE_REGISTRY_PUBLISH_MODE must be one of: local, api_sync, dual; "
+            f"received={mode}"
+        )
+
+    if mode in {"local", "dual"}:
+        _publish_registry_atomically(
+            source_registry_dir=source_registry_dir,
+            target_registry_dir=target_registry_dir,
+        )
+        _log("worker_pipeline_publish_local_complete", target_registry_dir=target_registry_dir)
+
+    if mode in {"api_sync", "dual"}:
+        _publish_registry_via_api(source_registry_dir=source_registry_dir, run_tag=run_tag)
+
+
 def _run_pipeline_once() -> int:
     repo_root = _repo_root()
     run_script = repo_root / "scripts" / "run_phase1.py"
@@ -137,6 +239,12 @@ def _run_pipeline_once() -> int:
     registry_format = os.environ.get("PANCCRE_PIPELINE_REGISTRY_FORMAT", "csv")
     context_group = os.environ.get("PANCCRE_PIPELINE_CONTEXT", "immune_hematopoietic")
     shortlist_top = _int_env("PANCCRE_PIPELINE_SHORTLIST_TOP", 10000, minimum=1)
+    projection_mode = os.environ.get("PANCCRE_PIPELINE_PROJECTION_MODE", "fixture").strip().lower()
+    if projection_mode not in {"fixture", "vcf"}:
+        raise ValueError(
+            "PANCCRE_PIPELINE_PROJECTION_MODE must be one of: fixture, vcf; "
+            f"received={projection_mode}"
+        )
 
     ext = _artifact_extension(intermediate_format)
     smoke_ccre = run_dir / "smoke" / f"ccre_ref.{ext}"
@@ -161,9 +269,9 @@ def _run_pipeline_once() -> int:
     command_env = os.environ.copy()
     command_env["PYTHONPATH"] = str((repo_root / "src").resolve())
 
-    commands: list[list[str]] = [
-        ["python3", str(run_script), "smoke-ingest", "--output-dir", str(run_dir / "smoke"), "--output-format", intermediate_format],
-        [
+    project_command: list[str]
+    if projection_mode == "fixture":
+        project_command = [
             "python3",
             str(run_script),
             "project-fixture",
@@ -173,7 +281,41 @@ def _run_pipeline_once() -> int:
             str(run_dir / "projection"),
             "--output-format",
             intermediate_format,
-        ],
+        ]
+    else:
+        variants_path = os.environ.get("PANCCRE_PIPELINE_VARIANTS", "").strip()
+        if not variants_path:
+            raise ValueError(
+                "PANCCRE_PIPELINE_VARIANTS must be set when "
+                "PANCCRE_PIPELINE_PROJECTION_MODE=vcf"
+            )
+        project_command = [
+            "python3",
+            str(run_script),
+            "project-vcf",
+            "--ccre-ref",
+            str(smoke_ccre),
+            "--ccre-ref-format",
+            intermediate_format,
+            "--variants",
+            variants_path,
+            "--output-dir",
+            str(run_dir / "projection"),
+            "--output-format",
+            intermediate_format,
+        ]
+
+        haplotypes_path = os.environ.get("PANCCRE_PIPELINE_HAPLOTYPES", "").strip()
+        if haplotypes_path:
+            project_command.extend(["--haplotypes", haplotypes_path])
+
+        max_variants = os.environ.get("PANCCRE_PIPELINE_MAX_VARIANTS", "").strip()
+        if max_variants:
+            project_command.extend(["--max-variants", max_variants])
+
+    commands: list[list[str]] = [
+        ["python3", str(run_script), "smoke-ingest", "--output-dir", str(run_dir / "smoke"), "--output-format", intermediate_format],
+        project_command,
         [
             "python3",
             str(run_script),
@@ -376,8 +518,12 @@ def _run_pipeline_once() -> int:
         _run_command(args, env=command_env)
 
     _validate_registry_dir(build_registry_dir, output_format=registry_format)
-    _publish_registry_atomically(source_registry_dir=build_registry_dir, target_registry_dir=publish_registry_dir)
-    _log("worker_pipeline_publish_complete", target_registry_dir=publish_registry_dir)
+    _publish_registry(
+        source_registry_dir=build_registry_dir,
+        target_registry_dir=publish_registry_dir,
+        run_tag=run_tag,
+    )
+    _log("worker_pipeline_publish_complete", publish_mode=os.environ.get("PANCCRE_REGISTRY_PUBLISH_MODE", "local"))
     _log("worker_pipeline_complete", run_tag=run_tag)
     return 0
 

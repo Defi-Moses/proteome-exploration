@@ -90,6 +90,8 @@ In-scope implementation items are complete through:
 - [x] Reproducible release builder (`scripts/release_phase1.py`)
 - [x] Release integrity checker (`scripts/check_release_contract.py`)
 - [x] Real-data onboarding bootstrap (`scripts/bootstrap_real_data.py`)
+- [x] VCF-backed projection adapter (`project-vcf`, worker-selectable via env)
+- [x] Cross-service registry sync (`PANCCRE_REGISTRY_PUBLISH_MODE=api_sync`)
 
 ## Runbook
 
@@ -121,9 +123,21 @@ python3 scripts/bootstrap_real_data.py \
   --execute
 ```
 
+5. Optional: run the VCF-backed projection adapter on a prepared `ccre_ref` table:
+
+```bash
+python3 scripts/run_phase1.py \
+  project-vcf \
+  --ccre-ref data/interim/smoke/ccre_ref.jsonl \
+  --ccre-ref-format jsonl \
+  --variants /absolute/path/to/hprc.vcf.gz \
+  --output-dir data/interim/projection \
+  --output-format jsonl
+```
+
 See also: [docs/real_data_onboarding.md](./docs/real_data_onboarding.md)
 
 ## Remaining External Dependencies
 
 - Real upstream data URLs and access terms for ENCODE/pangenome/CRISPRi/MPRA resources.
-- Real projection adapter integration (current projection is deterministic fixture projection for reproducible pipeline validation).
+- Biological calibration of projection/scoring thresholds against real benchmark labels once full data onboarding is complete.

@@ -49,7 +49,26 @@ python3 scripts/check_release_contract.py \
   --release-manifest data/releases/fixture-release-001/release_manifest.json
 ```
 
+## 5. Validate VCF-backed projection path (no full pipeline run)
+
+After `ccre_ref` is materialized and your pangenome VCF is available, run:
+
+```bash
+python3 scripts/run_phase1.py \
+  project-vcf \
+  --ccre-ref data/interim/smoke/ccre_ref.jsonl \
+  --ccre-ref-format jsonl \
+  --variants /absolute/path/to/hprc.vcf.gz \
+  --output-dir data/interim/projection \
+  --output-format jsonl
+```
+
+Optional controls:
+
+- `--haplotypes /absolute/path/to/haplotype_ids.tsv` to restrict to a subset/order.
+- `--max-variants 25000` to cap parsed variants for smoke/debug runs.
+
 ## Notes
 
-- Current projection implementation is fixture-based deterministic projection (`project-fixture`), suitable for pipeline validation and reproducible release testing.
-- Real haplotype projection adapters are a separate biological integration layer and should be added by replacing/augmenting projection inputs while preserving output contracts.
+- `project-fixture` remains the deterministic test adapter for reproducible fixture releases.
+- `project-vcf` is available for real-data projection without changing downstream contracts (`hap_projection` schema stays fixed).

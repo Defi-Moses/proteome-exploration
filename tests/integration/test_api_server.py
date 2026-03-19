@@ -1,13 +1,22 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
+import tarfile
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
 from panccre.api import create_app
+from panccre.api.server import (
+    REGISTRY_COLUMNS,
+    REPLACEMENT_CANDIDATE_COLUMNS,
+    SCORER_OUTPUT_COLUMNS,
+    VALIDATION_LINK_COLUMNS,
+)
 from panccre.candidate_discovery import run_candidate_discovery
 from panccre.evaluation import run_validation_link_build
 from panccre.features import run_feature_build
@@ -134,6 +143,145 @@ class APIServerTests(unittest.TestCase):
             candidate = client.get(f"/candidate/{candidate_id}")
             self.assertEqual(candidate.status_code, 200)
             self.assertEqual(candidate.json()["candidate_id"], candidate_id)
+
+    def test_internal_registry_sync_endpoint(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source_registry = tmp / "source_registry"
+            source_registry.mkdir(parents=True, exist_ok=True)
+
+            def _write_csv(path: Path, headers: list[str], row: dict[str, str]) -> None:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("w", encoding="utf-8") as handle:
+                    handle.write(",".join(headers) + "\n")
+                    handle.write(",".join(str(row.get(key, "")) for key in headers) + "\n")
+
+            _write_csv(
+                source_registry / "polymorphic_ccre_registry.csv",
+                REGISTRY_COLUMNS,
+                {
+                    "entity_id": "ent_1",
+                    "source_anchor_ccre": "EH38E000001",
+                    "haplotype_id": "HG00438",
+                    "state_class": "conserved",
+                    "ref_chr": "chr20",
+                    "ref_start": "100500",
+                    "ref_end": "100750",
+                    "context_group": "immune_hematopoietic",
+                    "ranking_score": "0.88",
+                    "qc_flag": "ok",
+                },
+            )
+            _write_csv(
+                source_registry / "replacement_candidates.csv",
+                REPLACEMENT_CANDIDATE_COLUMNS,
+                {
+                    "candidate_id": "cand_1",
+                    "parent_ccre_id": "EH38E000001",
+                    "haplotype_id": "HG00438",
+                    "window_class": "duplicate_neighbor",
+                    "alt_contig": "chr20",
+                    "alt_start": "100490",
+                    "alt_end": "100760",
+                    "seq_len": "270",
+                    "repeat_class": "LINE",
+                    "te_family": "L1",
+                    "motif_count": "3",
+                    "gc_content": "0.45",
+                    "nearest_gene": "GENE1000",
+                    "nearest_gene_distance": "5000",
+                },
+            )
+            _write_csv(
+                source_registry / "scorer_outputs.csv",
+                SCORER_OUTPUT_COLUMNS,
+                {
+                    "entity_id": "ent_1",
+                    "entity_type": "registry_entry",
+                    "scorer_name": "cheap_model_v1",
+                    "assay_proxy": "none",
+                    "context_group": "immune_hematopoietic",
+                    "ref_score": "0.42",
+                    "alt_score": "0.51",
+                    "delta_score": "0.09",
+                    "uncertainty": "0.11",
+                    "run_id": "sync-test",
+                },
+            )
+            _write_csv(
+                source_registry / "validation_links.csv",
+                VALIDATION_LINK_COLUMNS,
+                {
+                    "entity_id": "ent_1",
+                    "entity_type": "registry_entry",
+                    "study_id": "study_1",
+                    "assay_type": "crispri",
+                    "label": "1",
+                    "effect_size": "0.2",
+                    "cell_context": "K562",
+                    "publication_year": "2024",
+                    "holdout_group": "publication",
+                },
+            )
+
+            manifest_payload = {
+                "output_format": "csv",
+                "row_counts": {
+                    "polymorphic_ccre_registry": 1,
+                    "replacement_candidates": 1,
+                    "scorer_outputs": 1,
+                    "validation_links": 1,
+                },
+                "files": {
+                    "polymorphic_ccre_registry": str((source_registry / "polymorphic_ccre_registry.csv").resolve()),
+                    "replacement_candidates": str((source_registry / "replacement_candidates.csv").resolve()),
+                    "scorer_outputs": str((source_registry / "scorer_outputs.csv").resolve()),
+                    "validation_links": str((source_registry / "validation_links.csv").resolve()),
+                },
+            }
+            (source_registry / "registry_manifest.json").write_text(
+                json.dumps(manifest_payload, indent=2, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+
+            archive_path = tmp / "registry_payload.tar.gz"
+            with tarfile.open(archive_path, mode="w:gz") as handle:
+                handle.add(source_registry, arcname="registry")
+
+            target_registry = tmp / "api_registry"
+            with patch.dict(
+                os.environ,
+                {
+                    "PANCCRE_AUTO_SEED_REGISTRY": "0",
+                    "PANCCRE_REGISTRY_SYNC_TOKEN": "sync-token-test",
+                },
+                clear=False,
+            ):
+                app = create_app(registry_dir=target_registry)
+                client = TestClient(app)
+
+                sync_response = client.post(
+                    "/internal/registry/sync",
+                    content=archive_path.read_bytes(),
+                    headers={
+                        "content-type": "application/gzip",
+                        "x-panccre-sync-token": "sync-token-test",
+                        "x-panccre-run-tag": "run-sync-test",
+                    },
+                )
+                self.assertEqual(sync_response.status_code, 200)
+                self.assertEqual(sync_response.json()["status"], "ok")
+                self.assertEqual(sync_response.json()["run_tag"], "run-sync-test")
+
+                health = client.get("/health")
+                self.assertEqual(health.status_code, 200)
+                self.assertEqual(health.json()["status"], "ok")
+
+                downloads = client.get("/downloads")
+                self.assertEqual(downloads.status_code, 200)
+                files = downloads.json()["files"]
+                self.assertIn("polymorphic_ccre_registry", files)
+                self.assertTrue(str(files["polymorphic_ccre_registry"]).startswith(str(target_registry.resolve())))
 
 
 if __name__ == "__main__":

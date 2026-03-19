@@ -1,0 +1,9 @@
+##fileformat=VCFv4.2
+##contig=<ID=chr20,length=64444167>
+##INFO=<ID=SVTYPE,Number=1,Type=String,Description="SV type">
+##INFO=<ID=END,Number=1,Type=Integer,Description="End position of the variant">
+#CHROM	POS	ID	REF	ALT	QUAL	FILTER	INFO	FORMAT	HG002_h1	HG002_h2	NA12878_h1
+chr20	100600	var1	A	<DEL>	.	PASS	SVTYPE=DEL;END=100720	GT	1/1	0/0	0/0
+chr20	101100	var2	A	<DUP>	.	PASS	SVTYPE=DUP;END=101140	GT	0/0	1/1	0/0
+chr20	101620	var3	AT	A	.	PASS	.	GT	1/1	0/1	0/0
+chr20	102100	var4	G	T	.	PASS	.	GT	0/1	0/0	1/1

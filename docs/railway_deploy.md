@@ -31,6 +31,13 @@ This repository uses two Railway services:
   - `PANCCRE_PIPELINE_CONTEXT` (default `immune_hematopoietic`)
   - `PANCCRE_PIPELINE_REGISTRY_FORMAT` (`csv` default)
   - `PANCCRE_PIPELINE_SHORTLIST_TOP` (default `10000`)
+  - `PANCCRE_PIPELINE_PROJECTION_MODE` (`fixture` default; set `vcf` for variant-backed projection)
+  - `PANCCRE_PIPELINE_VARIANTS` (required when projection mode is `vcf`; absolute path to VCF/VCF.GZ)
+  - `PANCCRE_PIPELINE_HAPLOTYPES` (optional haplotype list path when projection mode is `vcf`)
+  - `PANCCRE_PIPELINE_MAX_VARIANTS` (optional parse cap for smoke/debug runs in VCF projection mode)
+  - `PANCCRE_REGISTRY_PUBLISH_MODE` (`local` default; `api_sync` recommended when API/worker use separate volumes)
+  - `PANCCRE_API_SYNC_URL` (optional; defaults to `https://$RAILWAY_SERVICE__PANCCRE_API_URL/internal/registry/sync`)
+  - `PANCCRE_REGISTRY_SYNC_TOKEN` (required when publish mode includes `api_sync`; must match API token)
   - `PANCCRE_MAX_ALPHAGENOME_CALLS` (optional scorer cap override)
   - `PANCCRE_FREEZE_EVALUATION` (`1` default)
   - `PANCCRE_FREEZE_LABEL` (optional explicit freeze label)
@@ -68,9 +75,17 @@ Set these on `@panccre/worker`:
 - `PANCCRE_WORKER_INTERVAL_SEC=1800`
 - `PANCCRE_PIPELINE_OUTPUT_ROOT=/data/runs`
 - `PANCCRE_PUBLISH_REGISTRY_DIR=/data/registry`
+- `PANCCRE_PIPELINE_PROJECTION_MODE=fixture`
+- `PANCCRE_REGISTRY_PUBLISH_MODE=api_sync`
+- `PANCCRE_REGISTRY_SYNC_TOKEN=<shared-secret>`
 - `PANCCRE_FREEZE_EVALUATION=1`
 - `PANCCRE_FREEZE_OUTPUT_ROOT=/data/processed`
 - `PANCCRE_BUILD_REPORT_BUNDLE=1`
 - `PANCCRE_REPORT_OUTPUT_ROOT=/data/reports`
 
-No secrets are required for the current API/worker runtime.
+Set this on `@panccre/api`:
+
+- `PANCCRE_REGISTRY_SYNC_TOKEN=<shared-secret>`
+
+With `api_sync`, worker uploads a tarred registry payload to API internal endpoint
+`/internal/registry/sync`; API atomically publishes it into its own mounted `/data/registry`.

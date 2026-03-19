@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import csv
+import hmac
 import json
 import os
 from pathlib import Path
+import shutil
+import tarfile
+import tempfile
 from typing import Any, Optional, Union
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 
 # Keep API column contracts local so service startup does not import
 # pandas/numpy-heavy pipeline modules.
@@ -124,6 +128,70 @@ def _safe_row_count(path: Path) -> int:
         return int(len(_read_table(path)))
     except Exception:
         return 0
+
+
+def _remove_dir_if_exists(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+
+
+def _rewrite_registry_manifest_paths(registry_dir: Path) -> None:
+    manifest_path = registry_dir / "registry_manifest.json"
+    if not manifest_path.exists():
+        return
+
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    files = payload.get("files")
+    if not isinstance(files, dict):
+        return
+
+    rewritten: dict[str, str] = {}
+    for stem in _required_registry_stems():
+        artifact_path = _discover_artifact(registry_dir, stem)
+        rewritten[stem] = str(artifact_path.resolve())
+
+    payload["files"] = rewritten
+    manifest_path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _publish_registry_atomically(*, source_registry_dir: Path, target_registry_dir: Path) -> None:
+    target_registry_dir.parent.mkdir(parents=True, exist_ok=True)
+    next_dir = target_registry_dir.parent / f"{target_registry_dir.name}.__next__"
+    prev_dir = target_registry_dir.parent / f"{target_registry_dir.name}.__prev__"
+
+    _remove_dir_if_exists(next_dir)
+    _remove_dir_if_exists(prev_dir)
+    shutil.copytree(source_registry_dir, next_dir)
+
+    if target_registry_dir.exists():
+        os.replace(target_registry_dir, prev_dir)
+    os.replace(next_dir, target_registry_dir)
+    _rewrite_registry_manifest_paths(target_registry_dir)
+    _remove_dir_if_exists(prev_dir)
+
+
+def _validate_registry_sync_payload(path: Path) -> None:
+    missing: list[str] = []
+    for stem in _required_registry_stems():
+        try:
+            _discover_artifact(path, stem)
+        except FileNotFoundError:
+            missing.append(stem)
+    if not (path / "registry_manifest.json").exists():
+        missing.append("registry_manifest.json")
+
+    if missing:
+        raise FileNotFoundError(f"registry sync payload missing required artifacts: {missing}")
+
+
+def _safe_extract_tar(archive_path: Path, destination: Path) -> None:
+    destination_root = destination.resolve()
+    with tarfile.open(archive_path, mode="r:gz") as handle:
+        for member in handle.getmembers():
+            member_path = (destination / member.name).resolve()
+            if destination_root not in member_path.parents and member_path != destination_root:
+                raise ValueError(f"unsafe tar entry path: {member.name}")
+        handle.extractall(destination)
 
 
 def _ensure_registry_placeholders(base_dir: Path) -> None:
@@ -245,11 +313,54 @@ class RegistryStore:
 def create_app(*, registry_dir: Optional[Union[str, Path]] = None) -> FastAPI:
     base_dir = Path(registry_dir or os.environ.get("PANCCRE_REGISTRY_DIR") or (Path.cwd() / "data" / "registry"))
     auto_seed = os.environ.get("PANCCRE_AUTO_SEED_REGISTRY", "1") != "0"
+    sync_token = os.environ.get("PANCCRE_REGISTRY_SYNC_TOKEN", "").strip()
     if auto_seed:
         _ensure_registry_placeholders(base_dir)
 
     store = RegistryStore(base_dir)
     app = FastAPI(title="pan-ccre-registry", version="0.1.0")
+
+    @app.post("/internal/registry/sync")
+    async def sync_registry(request: Request) -> dict[str, Any]:
+        if not sync_token:
+            raise HTTPException(status_code=404, detail="registry sync endpoint is disabled")
+
+        provided_token = request.headers.get("x-panccre-sync-token", "")
+        if not hmac.compare_digest(provided_token, sync_token):
+            raise HTTPException(status_code=401, detail="invalid sync token")
+
+        run_tag = request.headers.get("x-panccre-run-tag", "").strip() or "unknown"
+        payload_dir: Path | None = None
+        tmp_root = Path(tempfile.mkdtemp(prefix="panccre_registry_sync_"))
+        try:
+            archive_path = tmp_root / "registry_payload.tar.gz"
+            with archive_path.open("wb") as handle:
+                async for chunk in request.stream():
+                    handle.write(chunk)
+
+            if archive_path.stat().st_size <= 0:
+                raise HTTPException(status_code=400, detail="empty registry sync payload")
+
+            extract_root = tmp_root / "extract"
+            extract_root.mkdir(parents=True, exist_ok=True)
+            _safe_extract_tar(archive_path, extract_root)
+
+            nested_registry = extract_root / "registry"
+            payload_dir = nested_registry if nested_registry.exists() else extract_root
+            _validate_registry_sync_payload(payload_dir)
+            _publish_registry_atomically(source_registry_dir=payload_dir, target_registry_dir=base_dir)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"registry sync failed: {exc}") from exc
+        finally:
+            _remove_dir_if_exists(tmp_root)
+
+        return {
+            "status": "ok",
+            "run_tag": run_tag,
+            "registry_dir": str(base_dir.resolve()),
+        }
 
     @app.get("/health")
     def health() -> dict[str, Any]:

@@ -22,7 +22,7 @@ from panccre.manifests import (
     upsert_manifest_lock_entry,
     write_manifest_file,
 )
-from panccre.projection import project_fixture_haplotypes
+from panccre.projection import project_fixture_haplotypes, project_vcf_haplotypes
 from panccre.ranking import run_ranking_evaluation
 from panccre.reports import build_phase1_report_bundle, freeze_evaluation
 from panccre.registry import run_registry_build
@@ -107,6 +107,26 @@ def _add_project_parser(subparsers: argparse._SubParsersAction[argparse.Argument
     parser.add_argument("--ccre-ref", default=str(_repo_root() / "data" / "interim" / "smoke" / "ccre_ref.jsonl"))
     parser.add_argument("--ccre-ref-format", choices=["parquet", "csv", "jsonl"], default=None)
     parser.add_argument("--haplotypes", default=str(_repo_root() / "tests" / "golden" / "chr20" / "haplotypes_chr20_fixture.tsv"))
+    parser.add_argument("--output-format", choices=["parquet", "csv", "jsonl"], default="jsonl")
+    parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "interim" / "projection"))
+
+
+def _add_project_vcf_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser("project-vcf", help="Build hap_projection from ccre_ref + VCF/VCF.GZ variants")
+    parser.add_argument("--ccre-ref", default=str(_repo_root() / "data" / "interim" / "smoke" / "ccre_ref.jsonl"))
+    parser.add_argument("--ccre-ref-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--variants", required=True, help="VCF/VCF.GZ path containing sample genotype columns")
+    parser.add_argument(
+        "--haplotypes",
+        default=None,
+        help="Optional haplotype ID list (one-column TSV). If omitted, all VCF sample IDs are used.",
+    )
+    parser.add_argument(
+        "--max-variants",
+        type=int,
+        default=None,
+        help="Optional maximum number of variant records to parse (for smoke/debug runs).",
+    )
     parser.add_argument("--output-format", choices=["parquet", "csv", "jsonl"], default="jsonl")
     parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "interim" / "projection"))
 
@@ -267,6 +287,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_ingest_parser(subparsers)
     _add_smoke_parser(subparsers)
     _add_project_parser(subparsers)
+    _add_project_vcf_parser(subparsers)
     _add_state_call_parser(subparsers)
     _add_candidate_parser(subparsers)
     _add_feature_parser(subparsers)
@@ -473,6 +494,47 @@ def _handle_project_fixture(args: argparse.Namespace) -> int:
     )
 
     print(f"project-fixture_complete rows={result.row_count} output={result.output_path}")
+    print(f"qc_summary={result.qc_summary_path}")
+    print(f"run_manifest={run_manifest_path}")
+    return 0
+
+
+def _handle_project_vcf(args: argparse.Namespace) -> int:
+    output_dir = Path(args.output_dir)
+    extension = _artifact_extension(args.output_format)
+
+    output_path = output_dir / f"hap_projection.{extension}"
+    qc_path = output_dir / "hap_projection_qc.json"
+
+    result = project_vcf_haplotypes(
+        ccre_ref_path=args.ccre_ref,
+        variants_path=args.variants,
+        haplotypes_path=args.haplotypes,
+        output_path=output_path,
+        qc_summary_path=qc_path,
+        output_format=args.output_format,
+        ccre_ref_format=args.ccre_ref_format,
+        max_variants=args.max_variants,
+    )
+
+    run_manifest_path = _write_run_manifest(
+        command_name="project-vcf",
+        output_dir=output_dir,
+        inputs={
+            "ccre_ref": str(Path(args.ccre_ref).resolve()),
+            "variants": str(Path(args.variants).resolve()),
+            "haplotypes": str(Path(args.haplotypes).resolve()) if args.haplotypes else None,
+        },
+        params={
+            "ccre_ref_format": args.ccre_ref_format,
+            "max_variants": args.max_variants,
+            "output_format": args.output_format,
+        },
+        outputs={"hap_projection": str(result.output_path.resolve()), "qc_summary": str(result.qc_summary_path.resolve())},
+        row_count=result.row_count,
+    )
+
+    print(f"project-vcf_complete rows={result.row_count} output={result.output_path}")
     print(f"qc_summary={result.qc_summary_path}")
     print(f"run_manifest={run_manifest_path}")
     return 0
@@ -1036,6 +1098,8 @@ def main(argv: list[str] | None = None) -> int:
         return _handle_smoke_ingest(args)
     if args.command == "project-fixture":
         return _handle_project_fixture(args)
+    if args.command == "project-vcf":
+        return _handle_project_vcf(args)
     if args.command == "call-states":
         return _handle_call_states(args)
     if args.command == "discover-candidates":
