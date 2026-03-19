@@ -22,9 +22,19 @@ This repository uses two Railway services:
 - Root directory: `apps/worker`
 - Build config: `apps/worker/railway.toml`
 - Start command: `PYTHONPATH=/app/src python3 -m panccre.worker.main`
+- Worker build command installs pipeline runtime dependencies (`numpy`, `pandas`, `pyarrow`).
 - Optional env vars:
-  - `PANCCRE_WORKER_MODE` (`heartbeat` or `once`)
+  - `PANCCRE_WORKER_MODE` (`heartbeat`, `once`, `pipeline_once`, `pipeline_loop`)
   - `PANCCRE_WORKER_INTERVAL_SEC` (heartbeat interval)
+  - `PANCCRE_PIPELINE_OUTPUT_ROOT` (default `/data/runs`)
+  - `PANCCRE_PUBLISH_REGISTRY_DIR` (default `/data/registry`)
+  - `PANCCRE_PIPELINE_CONTEXT` (default `immune_hematopoietic`)
+  - `PANCCRE_PIPELINE_REGISTRY_FORMAT` (`csv` default)
+  - `PANCCRE_PIPELINE_SHORTLIST_TOP` (default `10000`)
+  - `PANCCRE_MAX_ALPHAGENOME_CALLS` (optional scorer cap override)
+  - `PANCCRE_FREEZE_EVALUATION` (`1` default)
+  - `PANCCRE_FREEZE_LABEL` (optional explicit freeze label)
+  - `PANCCRE_FREEZE_OUTPUT_ROOT` (default `/data/processed`)
 
 ## Runtime notes
 
@@ -32,6 +42,7 @@ This repository uses two Railway services:
 - Service commands set `PYTHONPATH=/app/src` directly, so no extra path env var is required.
 - `pnpm` remains the workspace package manager for service scripts.
 - `apps/api/nixpacks.toml` and `apps/worker/nixpacks.toml` install both Node/pnpm and Python runtime dependencies.
+- Railway watch patterns include `/src/**`, `/scripts/**`, and `/configs/**` so shared pipeline code changes trigger service rebuilds.
 
 ## Railway storage setup
 
@@ -44,5 +55,16 @@ This repository uses two Railway services:
    - `scorer_outputs.(jsonl|csv|parquet)`
    - `validation_links.(jsonl|csv|parquet)`
    - `registry_manifest.json` (recommended)
+
+## Recommended worker settings for production pipeline runs
+
+Set these on `@panccre/worker`:
+
+- `PANCCRE_WORKER_MODE=pipeline_loop`
+- `PANCCRE_WORKER_INTERVAL_SEC=1800`
+- `PANCCRE_PIPELINE_OUTPUT_ROOT=/data/runs`
+- `PANCCRE_PUBLISH_REGISTRY_DIR=/data/registry`
+- `PANCCRE_FREEZE_EVALUATION=1`
+- `PANCCRE_FREEZE_OUTPUT_ROOT=/data/processed`
 
 No secrets are required for the current API/worker runtime.

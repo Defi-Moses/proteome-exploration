@@ -24,6 +24,7 @@ from panccre.manifests import (
 )
 from panccre.projection import project_fixture_haplotypes
 from panccre.ranking import run_ranking_evaluation
+from panccre.reports import freeze_evaluation
 from panccre.registry import run_registry_build
 from panccre.scorers import (
     run_disagreement_ablation,
@@ -166,6 +167,14 @@ def _add_ranking_parser(subparsers: argparse._SubParsersAction[argparse.Argument
     parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "processed" / "ranking"))
 
 
+def _add_freeze_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser("freeze-evaluation", help="Freeze holdout splits and ranking reports under a label")
+    parser.add_argument("--label", required=True)
+    parser.add_argument("--validation-dir", default=str(_repo_root() / "data" / "processed" / "validation"))
+    parser.add_argument("--ranking-dir", default=str(_repo_root() / "data" / "processed" / "ranking"))
+    parser.add_argument("--output-root", default=str(_repo_root() / "data" / "processed"))
+
+
 def _add_shortlist_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("shortlist", help="Build shortlist for expensive scorers")
     parser.add_argument("--feature-matrix", default=str(_repo_root() / "data" / "processed" / "features" / "feature_matrix.jsonl"))
@@ -246,6 +255,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_validation_parser(subparsers)
     _add_holdout_parser(subparsers)
     _add_ranking_parser(subparsers)
+    _add_freeze_parser(subparsers)
 
     _add_shortlist_parser(subparsers)
     _add_scorer_fanout_parser(subparsers)
@@ -677,6 +687,37 @@ def _handle_evaluate_ranking(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_freeze_evaluation(args: argparse.Namespace) -> int:
+    result = freeze_evaluation(
+        label=args.label,
+        validation_source_dir=args.validation_dir,
+        ranking_source_dir=args.ranking_dir,
+        output_root=args.output_root,
+    )
+
+    run_manifest_path = _write_run_manifest(
+        command_name="freeze-evaluation",
+        output_dir=Path(args.output_root),
+        inputs={
+            "validation_dir": str(Path(args.validation_dir).resolve()),
+            "ranking_dir": str(Path(args.ranking_dir).resolve()),
+        },
+        params={"label": args.label},
+        outputs={
+            "frozen_validation_dir": str(result.validation_dir.resolve()),
+            "frozen_ranking_dir": str(result.ranking_dir.resolve()),
+            "freeze_manifest": str(result.manifest_path.resolve()),
+        },
+    )
+
+    print(f"freeze-evaluation_complete label={result.label}")
+    print(f"frozen_validation_dir={result.validation_dir}")
+    print(f"frozen_ranking_dir={result.ranking_dir}")
+    print(f"freeze_manifest={result.manifest_path}")
+    print(f"run_manifest={run_manifest_path}")
+    return 0
+
+
 def _handle_shortlist(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir)
     extension = _artifact_extension(args.output_format)
@@ -921,6 +962,8 @@ def main(argv: list[str] | None = None) -> int:
         return _handle_build_holdouts(args)
     if args.command == "evaluate-ranking":
         return _handle_evaluate_ranking(args)
+    if args.command == "freeze-evaluation":
+        return _handle_freeze_evaluation(args)
 
     if args.command == "shortlist":
         return _handle_shortlist(args)

@@ -1,0 +1,40 @@
+{
+  "artifacts": [
+    {
+      "bytes": 69611,
+      "path": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/processed/validation/frozen/2026-03-18-r1/validation_link_publication.jsonl",
+      "sha256": "a82cd30c7d1f941a5bb620ab7d85717a3cf31af2ebdc1f06d4333d11c259097b"
+    },
+    {
+      "bytes": 69701,
+      "path": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/processed/validation/frozen/2026-03-18-r1/validation_link_locus.jsonl",
+      "sha256": "7d642e72a2439735e158f5a7ebc0ad4b81be94207f06b597255294607d454ba6"
+    },
+    {
+      "bytes": 88,
+      "path": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/processed/validation/frozen/2026-03-18-r1/holdout_summary.json",
+      "sha256": "7c51e3790dea807c20057cb84ca3add67a651199ed02b95afb51598c05c5e23b"
+    },
+    {
+      "bytes": 1105,
+      "path": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/processed/ranking/frozen/2026-03-18-r1/ranking_publication_report.json",
+      "sha256": "a74900a9f6c60acbc2abdf2a21d46b949ea5332401f4177ab8c877b4cac61111"
+    },
+    {
+      "bytes": 1129,
+      "path": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/processed/ranking/frozen/2026-03-18-r1/ranking_locus_report.json",
+      "sha256": "7cea9f8acbd8f44f70223cc792fb2caaa2f428392a5a80c51c7f2ed0c389b5c5"
+    },
+    {
+      "bytes": 910,
+      "path": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/processed/ranking/frozen/2026-03-18-r1/baseline_comparison.json",
+      "sha256": "03c9d19566a98aca890bb00b4508d8053225587fe87d46cfe49c173e6bc224c1"
+    }
+  ],
+  "created_at_utc": "2026-03-18T23:43:33.709748+00:00",
+  "label": "2026-03-18-r1",
+  "sources": {
+    "ranking_source_dir": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/runs/20260318T231500Z-r1/ranking",
+    "validation_source_dir": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/runs/20260318T231500Z-r1/validation"
+  }
+}

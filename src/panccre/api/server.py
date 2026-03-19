@@ -174,8 +174,33 @@ class RegistryStore:
     def __init__(self, registry_dir: Path) -> None:
         self.registry_dir = registry_dir
         self._cache: dict[str, list[dict[str, Any]]] = {}
+        self._signature: tuple[tuple[str, int, int], ...] | None = None
+
+    def _current_signature(self) -> tuple[tuple[str, int, int], ...]:
+        manifest_path = self.registry_dir / "registry_manifest.json"
+        if manifest_path.exists():
+            stat = manifest_path.stat()
+            return (("registry_manifest.json", int(stat.st_mtime_ns), int(stat.st_size)),)
+
+        records: list[tuple[str, int, int]] = []
+        for stem in _required_registry_stems():
+            try:
+                path = _discover_artifact(self.registry_dir, stem)
+            except FileNotFoundError:
+                continue
+            stat = path.stat()
+            records.append((path.name, int(stat.st_mtime_ns), int(stat.st_size)))
+
+        return tuple(sorted(records))
+
+    def _refresh_if_changed(self) -> None:
+        signature = self._current_signature()
+        if signature != self._signature:
+            self._cache.clear()
+            self._signature = signature
 
     def _load(self, key: str, stem: str) -> list[dict[str, Any]]:
+        self._refresh_if_changed()
         if key in self._cache:
             return self._cache[key]
 
@@ -201,6 +226,7 @@ class RegistryStore:
         return self._load("validations", "validation_links")
 
     def downloads(self) -> dict[str, str]:
+        self._refresh_if_changed()
         manifest_path = self.registry_dir / "registry_manifest.json"
         if manifest_path.exists():
             payload = json.loads(manifest_path.read_text(encoding="utf-8"))

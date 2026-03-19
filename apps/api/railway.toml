@@ -1,6 +1,7 @@
 [build]
 builder = "NIXPACKS"
 buildCommand = "pnpm --filter @panccre/api build"
+watchPatterns = ["/apps/api/**", "/src/**", "/scripts/**", "/configs/**", "/tests/golden/**", "/pyproject.toml", "/nixpacks.toml"]
 
 [deploy]
 startCommand = "PYTHONPATH=/app/src python3 -m uvicorn panccre.api.server:app --host 0.0.0.0 --port $PORT"

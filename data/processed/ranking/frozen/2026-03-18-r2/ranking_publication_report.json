@@ -1,0 +1,56 @@
+{
+  "dataset": {
+    "feature_count": 10,
+    "test_rows": 150,
+    "train_rows": 150
+  },
+  "model": {
+    "feature_columns": [
+      "copy_count",
+      "coverage_frac",
+      "flank_synteny_confidence",
+      "seq_identity",
+      "split_count",
+      "state_is_absent",
+      "state_is_ambiguous",
+      "state_is_diverged",
+      "state_is_duplicated",
+      "state_is_fractured"
+    ],
+    "weights": [
+      0.21999999999999992,
+      -0.02443190130043149,
+      0.035139612205512094,
+      0.051145040337360115,
+      0.01679561541732255,
+      0.016590996223385446,
+      -0.010312255899862066,
+      -0.06431425364053212,
+      -0.059165510621085105,
+      -0.046733183989999816,
+      0.014420140999391151
+    ]
+  },
+  "pr_auc": {
+    "cheap_linear": 0.40960566171520013,
+    "naive": 0.16644282770046057
+  },
+  "top_k": {
+    "10": {
+      "cheap_linear": 0.3,
+      "naive": 0.0
+    },
+    "100": {
+      "cheap_linear": 0.32,
+      "naive": 0.14
+    },
+    "25": {
+      "cheap_linear": 0.4,
+      "naive": 0.16
+    },
+    "50": {
+      "cheap_linear": 0.38,
+      "naive": 0.18
+    }
+  }
+}

@@ -1,0 +1,50 @@
+{
+  "locus": {
+    "pr_auc": {
+      "cheap_linear": 0.6051086230119742,
+      "naive": 0.3063710047496646
+    },
+    "top_k": {
+      "10": {
+        "cheap_linear": 0.5,
+        "naive": 0.0
+      },
+      "100": {
+        "cheap_linear": 0.43333333333333335,
+        "naive": 0.43333333333333335
+      },
+      "25": {
+        "cheap_linear": 0.56,
+        "naive": 0.2
+      },
+      "50": {
+        "cheap_linear": 0.52,
+        "naive": 0.4
+      }
+    }
+  },
+  "publication": {
+    "pr_auc": {
+      "cheap_linear": 0.40960566171520013,
+      "naive": 0.16644282770046057
+    },
+    "top_k": {
+      "10": {
+        "cheap_linear": 0.3,
+        "naive": 0.0
+      },
+      "100": {
+        "cheap_linear": 0.32,
+        "naive": 0.14
+      },
+      "25": {
+        "cheap_linear": 0.4,
+        "naive": 0.16
+      },
+      "50": {
+        "cheap_linear": 0.38,
+        "naive": 0.18
+      }
+    }
+  }
+}

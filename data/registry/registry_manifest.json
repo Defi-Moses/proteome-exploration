@@ -1,16 +1,15 @@
 {
   "files": {
-    "polymorphic_ccre_registry": "data/registry/polymorphic_ccre_registry.csv",
-    "replacement_candidates": "data/registry/replacement_candidates.csv",
-    "scorer_outputs": "data/registry/scorer_outputs.csv",
-    "validation_links": "data/registry/validation_links.csv"
+    "polymorphic_ccre_registry": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/registry/polymorphic_ccre_registry.csv",
+    "replacement_candidates": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/registry/replacement_candidates.csv",
+    "scorer_outputs": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/registry/scorer_outputs.csv",
+    "validation_links": "/Users/jaketaylor/Desktop/Main/Code/proteome-exploration/data/registry/validation_links.csv"
   },
-  "generated_by": "api-placeholder-bootstrap",
   "output_format": "csv",
   "row_counts": {
-    "polymorphic_ccre_registry": 0,
-    "replacement_candidates": 0,
-    "scorer_outputs": 0,
-    "validation_links": 0
+    "polymorphic_ccre_registry": 300,
+    "replacement_candidates": 90,
+    "scorer_outputs": 1080,
+    "validation_links": 300
   }
 }

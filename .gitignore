@@ -13,3 +13,8 @@ node_modules/
 
 # OS / editor
 .DS_Store
+
+# Pipeline runtime artifacts
+data/runs/
+data/registry/run_manifest.json
+data/processed/run_manifest.json
