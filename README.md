@@ -137,6 +137,13 @@ python3 scripts/run_phase1.py \
 
 See also: [docs/real_data_onboarding.md](./docs/real_data_onboarding.md)
 
+## Operational Docs
+
+- [docs/railway_deploy.md](./docs/railway_deploy.md)
+- [docs/run_readiness.md](./docs/run_readiness.md)
+- [docs/system_overview.md](./docs/system_overview.md)
+- [docs/real_data_onboarding.md](./docs/real_data_onboarding.md)
+
 ## Remaining External Dependencies
 
 - Real upstream data URLs and access terms for ENCODE/pangenome/CRISPRi/MPRA resources.

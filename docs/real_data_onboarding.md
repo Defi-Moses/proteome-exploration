@@ -68,6 +68,15 @@ Optional controls:
 - `--haplotypes /absolute/path/to/haplotype_ids.tsv` to restrict to a subset/order.
 - `--max-variants 25000` to cap parsed variants for smoke/debug runs.
 
+## 6. Configure worker for non-fixture ingest/validation
+
+Set worker env vars before `pipeline_once|pipeline_loop`:
+
+- `PANCCRE_PIPELINE_CCRE_BED=/data/raw/encode_ccre_v4/2026-01/GRCh38-cCREs.bed`
+- `PANCCRE_PIPELINE_SOURCE_RELEASE=encode-v4-2026-01`
+- `PANCCRE_PIPELINE_ASSAY_SOURCE=/data/raw/<assay_source>/<version>/<file>`
+- `PANCCRE_PIPELINE_ASSAY_SOURCE_FORMAT=csv` (or `jsonl|parquet`)
+
 ## Notes
 
 - `project-fixture` remains the deterministic test adapter for reproducible fixture releases.

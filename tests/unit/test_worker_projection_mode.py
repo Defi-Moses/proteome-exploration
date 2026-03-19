@@ -73,6 +73,41 @@ class WorkerProjectionModeTests(unittest.TestCase):
             self.assertIn("--haplotypes", command)
             self.assertIn("--max-variants", command)
 
+    def test_pipeline_uses_real_ingest_when_ccre_bed_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            ccre_bed = tmp_path / "ccre_real.bed"
+            assay = tmp_path / "assay.tsv"
+            commands = self._run_pipeline_with_capture(
+                {
+                    "PANCCRE_PIPELINE_OUTPUT_ROOT": str(tmp_path / "runs"),
+                    "PANCCRE_PUBLISH_REGISTRY_DIR": str(tmp_path / "registry"),
+                    "PANCCRE_PIPELINE_RUN_TAG": "real-ingest-test",
+                    "PANCCRE_FREEZE_EVALUATION": "0",
+                    "PANCCRE_BUILD_REPORT_BUNDLE": "0",
+                    "PANCCRE_PIPELINE_CCRE_BED": str(ccre_bed),
+                    "PANCCRE_PIPELINE_SOURCE_RELEASE": "encode-v4-2026-01",
+                    "PANCCRE_PIPELINE_ASSAY_SOURCE": str(assay),
+                    "PANCCRE_PIPELINE_ASSAY_SOURCE_FORMAT": "csv",
+                }
+            )
+
+            ingest_commands = [cmd for cmd in commands if len(cmd) >= 3 and cmd[2] in {"smoke-ingest", "ingest-ccre"}]
+            self.assertEqual(len(ingest_commands), 1)
+            ingest = ingest_commands[0]
+            self.assertEqual(ingest[2], "ingest-ccre")
+            self.assertIn("--input-bed", ingest)
+            self.assertIn(str(ccre_bed), ingest)
+            self.assertIn("--source-release", ingest)
+            self.assertIn("encode-v4-2026-01", ingest)
+
+            validation_commands = [cmd for cmd in commands if len(cmd) >= 3 and cmd[2] == "build-validation-link"]
+            self.assertEqual(len(validation_commands), 1)
+            validation = validation_commands[0]
+            self.assertIn("--assay-source", validation)
+            self.assertIn(str(assay), validation)
+            self.assertIn("--assay-source-format", validation)
+
     def test_vcf_projection_requires_variants_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir, patch.dict(
             os.environ,

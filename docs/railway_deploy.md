@@ -31,6 +31,10 @@ This repository uses two Railway services:
   - `PANCCRE_PIPELINE_CONTEXT` (default `immune_hematopoietic`)
   - `PANCCRE_PIPELINE_REGISTRY_FORMAT` (`csv` default)
   - `PANCCRE_PIPELINE_SHORTLIST_TOP` (default `10000`)
+  - `PANCCRE_PIPELINE_CCRE_BED` (optional; when set, worker uses `ingest-ccre` on this BED instead of fixture `smoke-ingest`)
+  - `PANCCRE_PIPELINE_SOURCE_RELEASE` (default `fixture-2026-03`; used with `PANCCRE_PIPELINE_CCRE_BED`)
+  - `PANCCRE_PIPELINE_ASSAY_SOURCE` (optional validation-link assay path; defaults to fixture assay when unset)
+  - `PANCCRE_PIPELINE_ASSAY_SOURCE_FORMAT` (`csv` default; one of `csv|jsonl|parquet`)
   - `PANCCRE_PIPELINE_PROJECTION_MODE` (`fixture` default; set `vcf` for variant-backed projection)
   - `PANCCRE_PIPELINE_VARIANTS` (required when projection mode is `vcf`; absolute path to VCF/VCF.GZ)
   - `PANCCRE_PIPELINE_HAPLOTYPES` (optional haplotype list path when projection mode is `vcf`)
@@ -75,7 +79,11 @@ Set these on `@panccre/worker`:
 - `PANCCRE_WORKER_INTERVAL_SEC=1800`
 - `PANCCRE_PIPELINE_OUTPUT_ROOT=/data/runs`
 - `PANCCRE_PUBLISH_REGISTRY_DIR=/data/registry`
-- `PANCCRE_PIPELINE_PROJECTION_MODE=fixture`
+- `PANCCRE_PIPELINE_CCRE_BED=/data/raw/encode_ccre_v4/2026-01/GRCh38-cCREs.bed`
+- `PANCCRE_PIPELINE_SOURCE_RELEASE=encode-v4-2026-01`
+- `PANCCRE_PIPELINE_PROJECTION_MODE=vcf`
+- `PANCCRE_PIPELINE_VARIANTS=/data/raw/pangenome_haplotype_alignments/1.1/hprc-v1.1-mc-grch38.vcfbub.a100k.wave.vcf.gz`
+- `PANCCRE_PIPELINE_HAPLOTYPES=/data/config/haplotypes/hprc_phase1_subset.tsv`
 - `PANCCRE_REGISTRY_PUBLISH_MODE=api_sync`
 - `PANCCRE_REGISTRY_SYNC_TOKEN=<shared-secret>`
 - `PANCCRE_FREEZE_EVALUATION=1`

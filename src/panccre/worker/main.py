@@ -265,9 +265,60 @@ def _run_pipeline_once() -> int:
     report_output_root = Path(os.environ.get("PANCCRE_REPORT_OUTPUT_ROOT", "/data/reports"))
     report_top_hits_k = _int_env("PANCCRE_REPORT_TOP_HITS_K", 100, minimum=1)
     report_case_study_count = _int_env("PANCCRE_REPORT_CASE_STUDY_COUNT", 3, minimum=1)
+    ccre_input_bed = os.environ.get("PANCCRE_PIPELINE_CCRE_BED", "").strip()
+    source_release = os.environ.get("PANCCRE_PIPELINE_SOURCE_RELEASE", "fixture-2026-03").strip() or "fixture-2026-03"
+    assay_source = os.environ.get("PANCCRE_PIPELINE_ASSAY_SOURCE", "").strip()
+    assay_source_format = os.environ.get("PANCCRE_PIPELINE_ASSAY_SOURCE_FORMAT", "csv").strip().lower() or "csv"
+    if assay_source_format not in {"csv", "jsonl", "parquet"}:
+        raise ValueError(
+            "PANCCRE_PIPELINE_ASSAY_SOURCE_FORMAT must be one of: csv, jsonl, parquet; "
+            f"received={assay_source_format}"
+        )
 
     command_env = os.environ.copy()
     command_env["PYTHONPATH"] = str((repo_root / "src").resolve())
+
+    ingest_command: list[str]
+    if ccre_input_bed:
+        ingest_command = [
+            "python3",
+            str(run_script),
+            "ingest-ccre",
+            "--input-bed",
+            ccre_input_bed,
+            "--output-dir",
+            str(run_dir / "smoke"),
+            "--context-group",
+            context_group,
+            "--source-release",
+            source_release,
+            "--output-format",
+            intermediate_format,
+        ]
+    else:
+        ingest_command = [
+            "python3",
+            str(run_script),
+            "smoke-ingest",
+            "--output-dir",
+            str(run_dir / "smoke"),
+            "--output-format",
+            intermediate_format,
+        ]
+
+    validation_command: list[str] = [
+        "python3",
+        str(run_script),
+        "build-validation-link",
+        "--ccre-state",
+        str(state_path),
+        "--output-dir",
+        str(run_dir / "validation"),
+        "--output-format",
+        intermediate_format,
+    ]
+    if assay_source:
+        validation_command.extend(["--assay-source", assay_source, "--assay-source-format", assay_source_format])
 
     project_command: list[str]
     if projection_mode == "fixture":
@@ -314,7 +365,7 @@ def _run_pipeline_once() -> int:
             project_command.extend(["--max-variants", max_variants])
 
     commands: list[list[str]] = [
-        ["python3", str(run_script), "smoke-ingest", "--output-dir", str(run_dir / "smoke"), "--output-format", intermediate_format],
+        ingest_command,
         project_command,
         [
             "python3",
@@ -351,17 +402,7 @@ def _run_pipeline_once() -> int:
             "--output-format",
             intermediate_format,
         ],
-        [
-            "python3",
-            str(run_script),
-            "build-validation-link",
-            "--ccre-state",
-            str(state_path),
-            "--output-dir",
-            str(run_dir / "validation"),
-            "--output-format",
-            intermediate_format,
-        ],
+        validation_command,
         [
             "python3",
             str(run_script),
