@@ -20,3 +20,7 @@ data/registry/run_manifest.json
 data/processed/run_manifest.json
 data/releases/
 data/reports/
+
+# Local raw-source downloads/bootstrap outputs
+data/raw/*
+!data/raw/.gitkeep

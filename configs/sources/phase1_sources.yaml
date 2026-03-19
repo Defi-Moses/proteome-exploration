@@ -116,7 +116,7 @@ sources:
   # ─── Optional overlays ────────────────────────────────────────────────────
 
   - source_id: gtex_eqtl_v8
-    enabled: true
+    enabled: false
     name: GTEx v8 eQTL significant variant-gene pairs (all tissues)
     version: "8"
     download_url: "https://storage.googleapis.com/adult-gtex/bulk-gex/v8/single-tissue-cis-qtl/GTEx_Analysis_v8_eQTL.tar"
@@ -127,7 +127,8 @@ sources:
     notes: >
       GTEx v8 single-tissue cis-eQTL significant pairs. Tar archive with
       per-tissue signif_variant_gene_pairs files. Use for eQTL-cCRE overlap
-      enrichment and regulatory evidence layering. Redirect-based download.
+      enrichment and regulatory evidence layering. Disabled by default:
+      current URL returned HTTP 404 during bootstrap.
 
   - source_id: finucane_finemapping
     enabled: false
