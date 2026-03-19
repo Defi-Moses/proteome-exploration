@@ -6,14 +6,15 @@ This project is implementation-complete on fixture data. To run on real data, co
 
 Edit:
 
-- `configs/sources/phase1_sources.template.yaml`
+- `configs/sources/phase1_sources.yaml`
 
 Replace each placeholder `download_url` value with an actual URL (or `file:///...` local path).
+Entries with `enabled: false` are intentionally skipped by bootstrap until ready.
 
 ## 2. Dry-run the bootstrap
 
 ```bash
-python3 scripts/bootstrap_real_data.py --config configs/sources/phase1_sources.template.yaml
+python3 scripts/bootstrap_real_data.py --config configs/sources/phase1_sources.yaml
 ```
 
 Expected output includes `dry_run source=...`.
@@ -22,7 +23,7 @@ Expected output includes `dry_run source=...`.
 
 ```bash
 python3 scripts/bootstrap_real_data.py \
-  --config configs/sources/phase1_sources.template.yaml \
+  --config configs/sources/phase1_sources.yaml \
   --execute
 ```
 

@@ -12,6 +12,6 @@
     "dev:worker": "pnpm --filter @panccre/worker dev",
     "release:fixture": "python3 scripts/release_phase1.py --label fixture-release-001",
     "release:check": "python3 scripts/check_release_contract.py --release-manifest data/releases/fixture-release-001/release_manifest.json",
-    "sources:bootstrap": "python3 scripts/bootstrap_real_data.py --config configs/sources/phase1_sources.template.yaml"
+    "sources:bootstrap": "python3 scripts/bootstrap_real_data.py --config configs/sources/phase1_sources.yaml"
   }
 }

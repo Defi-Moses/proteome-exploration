@@ -27,7 +27,7 @@ from panccre.manifests import (
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Bootstrap phase-1 source downloads and manifest lock entries")
-    parser.add_argument("--config", default=str(ROOT / "configs" / "sources" / "phase1_sources.template.yaml"))
+    parser.add_argument("--config", default=str(ROOT / "configs" / "sources" / "phase1_sources.yaml"))
     parser.add_argument("--raw-root", default=str(ROOT / "data" / "raw"))
     parser.add_argument("--manifest-root", default=str(ROOT / "data" / "raw" / "manifests"))
     parser.add_argument("--lock-file", default=str(ROOT / "data" / "raw" / "manifests" / "manifest.lock.json"))
@@ -55,6 +55,8 @@ def _load_config(path: Path) -> list[dict[str, Any]]:
     for idx, source in enumerate(sources):
         if not isinstance(source, dict):
             raise ValueError(f"sources[{idx}] must be an object")
+        if "enabled" in source and not isinstance(source.get("enabled"), bool):
+            raise ValueError(f"sources[{idx}] field 'enabled' must be a boolean when provided")
         for field in required_fields:
             value = source.get(field)
             if not isinstance(value, str) or not value.strip():
@@ -85,17 +87,26 @@ def bootstrap_sources(
     for source in sources:
         source_id = str(source["source_id"]).strip()
         version = str(source["version"]).strip()
+        enabled = bool(source.get("enabled", True))
         download_url = str(source["download_url"]).strip()
-
-        if _has_placeholder(download_url):
-            raise ValueError(f"download_url for {source_id}@{version} still contains placeholders: {download_url}")
 
         action = {
             "source_id": source_id,
             "version": version,
             "download_url": download_url,
             "execute": bool(execute),
+            "enabled": enabled,
         }
+
+        if not enabled:
+            print(f"skipped source={source_id}@{version} reason=disabled")
+            action["skipped"] = True
+            action["skip_reason"] = "disabled"
+            summary_rows.append(action)
+            continue
+
+        if _has_placeholder(download_url):
+            raise ValueError(f"download_url for {source_id}@{version} still contains placeholders: {download_url}")
 
         if not execute:
             print(f"dry_run source={source_id}@{version} url={download_url}")

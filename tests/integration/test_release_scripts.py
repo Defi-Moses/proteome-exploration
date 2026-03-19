@@ -68,7 +68,16 @@ class ReleaseScriptsIntegrationTests(unittest.TestCase):
                         "parser_version": "0.1.0",
                         "format": "bed",
                         "notes": "integration test fixture",
-                    }
+                    },
+                    {
+                        "source_id": "disabled_placeholder_source",
+                        "version": "2026-03",
+                        "download_url": "<manual-mirror-url>",
+                        "license": "public",
+                        "genome_build": "GRCh38",
+                        "parser_version": "0.1.0",
+                        "enabled": False,
+                    },
                 ]
             }
             config_path.write_text(yaml.safe_dump(config_payload, sort_keys=False), encoding="utf-8")
@@ -92,6 +101,7 @@ class ReleaseScriptsIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(dry_run.returncode, 0, msg=f"dry-run failed\nstdout={dry_run.stdout}\nstderr={dry_run.stderr}")
             self.assertIn("dry_run source=fixture_source@2026-03", dry_run.stdout)
+            self.assertIn("skipped source=disabled_placeholder_source@2026-03 reason=disabled", dry_run.stdout)
 
             execute = subprocess.run(
                 [

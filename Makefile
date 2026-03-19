@@ -14,4 +14,4 @@ check-release:
 	python3 scripts/check_release_contract.py --release-manifest data/releases/fixture-release-001/release_manifest.json
 
 bootstrap-real-data:
-	python3 scripts/bootstrap_real_data.py --config configs/sources/phase1_sources.template.yaml
+	python3 scripts/bootstrap_real_data.py --config configs/sources/phase1_sources.yaml

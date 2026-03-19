@@ -1,0 +1,158 @@
+###############################################################################
+# Pan-cCRE Phase-1 Source Registry  (master)
+# Generated: 2026-03-19
+# Merged from two independent resolution passes.
+# `enabled: false` entries are intentionally skipped by bootstrap until a
+# direct reachable URL (or local file mirror URL) is available.
+###############################################################################
+
+sources:
+  # ─── Required ──────────────────────────────────────────────────────────────
+
+  - source_id: encode_ccre_v4
+    enabled: true
+    name: ENCODE expanded cCRE registry (V4, all classes combined)
+    version: "2026-01"
+    download_url: "https://downloads.wenglab.org/Registry-V4/GRCh38-cCREs.bed"
+    license: "public / follow SCREEN upstream terms (Moore...Weng 2026 Nature)"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "bed"
+    notes: >
+      Primary cCRE reference anchors for phase-1. Combined GRCh38 V4 BED
+      containing all 2.35M cCREs across 8 classes (PLS, pELS, dELS,
+      CA-CTCF, CA-H3K4me3, CA-TF, CA, TF). ~129 MB.
+    supplementary_urls:
+      - "https://downloads.wenglab.org/Registry-V4/GRCh38-cCREs.PLS.bed"
+      - "https://downloads.wenglab.org/Registry-V4/GRCh38-cCREs.ELS.bed"
+      - "https://downloads.wenglab.org/Registry-V4/GRCh38-cCREs.CA-CTCF.bed"
+      - "https://downloads.wenglab.org/Registry-V4/GRCh38-cCREs.CA-H3K4me3.bed"
+      - "https://downloads.wenglab.org/Registry-V4/GRCh38-cCREs.CA-TF.bed"
+      - "https://downloads.wenglab.org/Registry-V4/GRCh38-cCREs.CA.bed"
+      - "https://downloads.wenglab.org/Registry-V4/GRCh38-cCREs.TF.bed"
+
+  - source_id: pangenome_haplotype_alignments
+    enabled: true
+    name: HPRC Minigraph-Cactus decomposed pangenome VCF (GRCh38, v1.1)
+    version: "1.1"
+    download_url: "https://s3-us-west-2.amazonaws.com/human-pangenomics/pangenomes/freeze/freeze1/minigraph-cactus/hprc-v1.1-mc-grch38/hprc-v1.1-mc-grch38.vcfbub.a100k.wave.vcf.gz"
+    license: "public / follow HPRC data-use best practices"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "vcf.gz"
+    notes: >
+      GRCh38-referenced HPRC v1.1 MC decomposed VCF (vcfbub a100k + vcfwave).
+      90 haplotypes. Nested bubbles resolved; suitable for direct SV-cCRE
+      intersection and haplotype projection. ~1.7 GB.
+    supplementary_urls:
+      - "https://s3-us-west-2.amazonaws.com/human-pangenomics/pangenomes/freeze/freeze1/minigraph-cactus/hprc-v1.1-mc-grch38/hprc-v1.1-mc-grch38.vcf.gz"
+      - "https://s3-us-west-2.amazonaws.com/human-pangenomics/pangenomes/freeze/freeze1/minigraph-cactus/hprc-v1.1-mc-grch38/hprc-v1.1-mc-grch38.d9.gbz"
+
+  - source_id: encode_noncoding_crispri
+    enabled: false
+    name: ENCODE noncoding CRISPRi benchmark (heldout 5 cell types, GRCh38)
+    version: "2025"
+    download_url: "https://github.com/EngreitzLab/CRISPR_comparison/raw/refs/heads/main/resources/crispr_data/EPCrisprBenchmark_combined_data.heldout_5_cell_types.GRCh38.tsv.gz"
+    license: "MIT repository / follow upstream benchmark study terms"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "tsv.gz"
+    notes: >
+      Heldout CRISPRi benchmark labels across GM12878, HCT116, Jurkat,
+      K562, and WTC11. Current Engreitz repo filename; the older
+      EPCrisprBenchmark_ensemble_data filename is deprecated. ~374 KB.
+      Set enabled=true after verifying direct proxy access or replacing
+      download_url with a local file mirror (file:///...).
+    supplementary_urls:
+      - "https://github.com/EngreitzLab/CRISPR_comparison/raw/refs/heads/main/resources/crispr_data/EPCrisprBenchmark_combined_data.training_K562.GRCh38.tsv.gz"
+
+  - source_id: mprabase
+    enabled: false
+    name: MPRAbase GRCh38 human experiments table
+    version: "2025"
+    download_url: "https://raw.githubusercontent.com/Ahituv-lab/mprabase/refs/heads/main/mprabase_shiny/data/tsv/GRCh38_ALL.tsv"
+    license: "follow upstream (Zhao...Ahituv, Genome Res 2025)"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "tsv"
+    notes: >
+      Curated MPRAbase human GRCh38 table from the Ahituv lab GitHub repo.
+      130 experiments, ~17.7M elements across 35 cell types. Direct
+      download; the interactive portal at mprabase.com provides per-study
+      browsing. ~2.2 MB. Set enabled=true after confirming proxy access
+      to GitHub raw endpoints or swapping to local mirror file URL.
+
+  - source_id: gnomad_sv_v4_1
+    enabled: true
+    name: gnomAD structural variants v4.1 sites BED
+    version: "4.1"
+    download_url: "https://storage.googleapis.com/gcp-public-data--gnomad/release/4.1/genome_sv/gnomad.v4.1.sv.sites.bed.gz"
+    license: "ODC Open Database License (ODbL) / follow gnomAD terms"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "bed.gz"
+    notes: >
+      Public structural-variant context for phase-1. Population allele
+      frequencies for DEL, DUP, INV, INS, CPX, CTX across 76k genomes.
+      Use for SV-cCRE overlap and breakpoint-context enrichment. ~1.3 GB.
+
+  - source_id: anchored_nrs_gnrs
+    enabled: false
+    name: GNRS anchored non-reference sequence genotypes
+    version: "V1.0.0"
+    download_url: "https://github.com/xie-lab/GNRS/raw/refs/heads/main/NRS/GraphNRS_all.genotype.vcf.gz"
+    license: "CC BY 4.0 / follow Zenodo record"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "vcf.gz"
+    notes: >
+      Anchored NRS resource. Placed NRS entries carry GRCh38 genomic
+      coordinates; unplaced NRS retain presence/absence genotypes in the
+      same VCF. ~19 MB. Set enabled=true after verifying proxy reachability
+      or swapping to local mirror file URL.
+    supplementary_urls:
+      - "https://s3-us-west-2.amazonaws.com/human-pangenomics/pangenomes/freeze/freeze1/minigraph-cactus/hprc-v1.1-mc-grch38/hprc-v1.1-mc-grch38.d9.gbz"
+
+  # ─── Optional overlays ────────────────────────────────────────────────────
+
+  - source_id: gtex_eqtl_v8
+    enabled: true
+    name: GTEx v8 eQTL significant variant-gene pairs (all tissues)
+    version: "8"
+    download_url: "https://storage.googleapis.com/adult-gtex/bulk-gex/v8/single-tissue-cis-qtl/GTEx_Analysis_v8_eQTL.tar"
+    license: "dbGaP (summary stats public) / follow GTEx data-use policy"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "tar"
+    notes: >
+      GTEx v8 single-tissue cis-eQTL significant pairs. Tar archive with
+      per-tissue signif_variant_gene_pairs files. Use for eQTL-cCRE overlap
+      enrichment and regulatory evidence layering. Redirect-based download.
+
+  - source_id: finucane_finemapping
+    enabled: false
+    name: Finucane lab GWAS fine-mapping credible sets
+    version: "2024-01"
+    download_url: "https://www.finucanelab.org/data"
+    license: "follow upstream"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "tsv"
+    notes: >
+      GWAS fine-mapping overlays for SNP-to-gene benchmarking. Landing
+      page; requires manual selection or direct-link automation. Useful
+      for PIP-weighted cCRE enrichment analysis.
+
+  - source_id: te_subclass_rmsk
+    enabled: true
+    name: UCSC RepeatMasker TE subclass annotations (GRCh38)
+    version: "2024-01"
+    download_url: "https://hgdownload.cse.ucsc.edu/goldenpath/hg38/database/rmsk.txt.gz"
+    license: "public"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "tsv"
+    notes: >
+      TE subclass annotations from UCSC RepeatMasker track. Columns
+      include repName, repClass, repFamily. Use for TE-cCRE co-occurrence
+      and transposon-derived regulatory element analysis. ~156 MB.

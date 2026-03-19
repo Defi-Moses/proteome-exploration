@@ -110,14 +110,14 @@ python3 scripts/check_release_contract.py \
 
 ```bash
 python3 scripts/bootstrap_real_data.py \
-  --config configs/sources/phase1_sources.template.yaml
+  --config configs/sources/phase1_sources.yaml
 ```
 
 4. Execute real-data source bootstrap after replacing placeholder URLs:
 
 ```bash
 python3 scripts/bootstrap_real_data.py \
-  --config configs/sources/phase1_sources.template.yaml \
+  --config configs/sources/phase1_sources.yaml \
   --execute
 ```
 
