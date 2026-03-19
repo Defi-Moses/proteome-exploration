@@ -35,6 +35,10 @@ This repository uses two Railway services:
   - `PANCCRE_FREEZE_EVALUATION` (`1` default)
   - `PANCCRE_FREEZE_LABEL` (optional explicit freeze label)
   - `PANCCRE_FREEZE_OUTPUT_ROOT` (default `/data/processed`)
+  - `PANCCRE_BUILD_REPORT_BUNDLE` (`1` default)
+  - `PANCCRE_REPORT_OUTPUT_ROOT` (default `/data/reports`)
+  - `PANCCRE_REPORT_TOP_HITS_K` (default `100`)
+  - `PANCCRE_REPORT_CASE_STUDY_COUNT` (default `3`)
 
 ## Runtime notes
 
@@ -66,5 +70,7 @@ Set these on `@panccre/worker`:
 - `PANCCRE_PUBLISH_REGISTRY_DIR=/data/registry`
 - `PANCCRE_FREEZE_EVALUATION=1`
 - `PANCCRE_FREEZE_OUTPUT_ROOT=/data/processed`
+- `PANCCRE_BUILD_REPORT_BUNDLE=1`
+- `PANCCRE_REPORT_OUTPUT_ROOT=/data/reports`
 
 No secrets are required for the current API/worker runtime.

@@ -18,3 +18,5 @@ node_modules/
 data/runs/
 data/registry/run_manifest.json
 data/processed/run_manifest.json
+data/releases/
+data/reports/

@@ -79,9 +79,51 @@ Canonical spec: [PROJECT_SPEC.md](./PROJECT_SPEC.md)
 - [x] Expose minimal API endpoints (`/health`, `/ccre/{id}`, `/top_hits`, `/downloads`).
 - [x] Prepare Railway deployment configs for API and worker services.
 
-## Immediate Next TODOs (Start Here)
+## Implementation Line Status
 
-- [x] Implement `scripts/build_manifest.py` with manifest schema validation.
-- [x] Add `ccre_ref` parser + writer in `src/panccre/ingest/`.
-- [x] Commit a minimal chromosome-20 fixture in `tests/golden/`.
-- [x] Wire the first end-to-end smoke command in `src/panccre/cli/`.
+In-scope implementation items are complete through:
+
+- [x] Pipeline orchestration (`PANCCRE_WORKER_MODE=pipeline_once|pipeline_loop`)
+- [x] Atomic registry publish and API hot-refresh behavior
+- [x] Freeze/versioned benchmark artifacts (`freeze-evaluation`)
+- [x] Phase-1 report bundle + case-study packets (`build-phase1-report`)
+- [x] Reproducible release builder (`scripts/release_phase1.py`)
+- [x] Release integrity checker (`scripts/check_release_contract.py`)
+- [x] Real-data onboarding bootstrap (`scripts/bootstrap_real_data.py`)
+
+## Runbook
+
+1. Run fixture release:
+
+```bash
+python3 scripts/release_phase1.py --label fixture-release-001
+```
+
+2. Validate release integrity:
+
+```bash
+python3 scripts/check_release_contract.py \
+  --release-manifest data/releases/fixture-release-001/release_manifest.json
+```
+
+3. Prepare real data source onboarding:
+
+```bash
+python3 scripts/bootstrap_real_data.py \
+  --config configs/sources/phase1_sources.template.yaml
+```
+
+4. Execute real-data source bootstrap after replacing placeholder URLs:
+
+```bash
+python3 scripts/bootstrap_real_data.py \
+  --config configs/sources/phase1_sources.template.yaml \
+  --execute
+```
+
+See also: [docs/real_data_onboarding.md](./docs/real_data_onboarding.md)
+
+## Remaining External Dependencies
+
+- Real upstream data URLs and access terms for ENCODE/pangenome/CRISPRi/MPRA resources.
+- Real projection adapter integration (current projection is deterministic fixture projection for reproducible pipeline validation).

@@ -153,6 +153,10 @@ def _run_pipeline_once() -> int:
     max_alpha_calls = os.environ.get("PANCCRE_MAX_ALPHAGENOME_CALLS", "").strip()
     publish_registry_dir = Path(os.environ.get("PANCCRE_PUBLISH_REGISTRY_DIR", "/data/registry"))
     build_registry_dir = run_dir / "registry_build"
+    report_enabled = os.environ.get("PANCCRE_BUILD_REPORT_BUNDLE", "1") != "0"
+    report_output_root = Path(os.environ.get("PANCCRE_REPORT_OUTPUT_ROOT", "/data/reports"))
+    report_top_hits_k = _int_env("PANCCRE_REPORT_TOP_HITS_K", 100, minimum=1)
+    report_case_study_count = _int_env("PANCCRE_REPORT_CASE_STUDY_COUNT", 3, minimum=1)
 
     command_env = os.environ.copy()
     command_env["PYTHONPATH"] = str((repo_root / "src").resolve())
@@ -271,6 +275,32 @@ def _run_pipeline_once() -> int:
         [
             "python3",
             str(run_script),
+            "compute-disagreement",
+            "--scorer-outputs",
+            str(scorer_output_path),
+            "--output-dir",
+            str(run_dir / "scorers"),
+            "--output-format",
+            intermediate_format,
+        ],
+        [
+            "python3",
+            str(run_script),
+            "run-ablations",
+            "--feature-matrix",
+            str(feature_path),
+            "--disagreement-features",
+            str(run_dir / "scorers" / f"disagreement_features.{ext}"),
+            "--publication-validation",
+            str(publication_holdout_path),
+            "--locus-validation",
+            str(locus_holdout_path),
+            "--output-dir",
+            str(run_dir / "ranking"),
+        ],
+        [
+            "python3",
+            str(run_script),
             "build-registry",
             "--ccre-state",
             str(state_path),
@@ -290,7 +320,10 @@ def _run_pipeline_once() -> int:
     ]
 
     if max_alpha_calls:
-        commands[9].extend(["--max-alphagenome-calls", max_alpha_calls])
+        for command in commands:
+            if len(command) >= 3 and command[2] == "score-fanout":
+                command.extend(["--max-alphagenome-calls", max_alpha_calls])
+                break
 
     freeze_enabled = os.environ.get("PANCCRE_FREEZE_EVALUATION", "1") != "0"
     if freeze_enabled:
@@ -309,6 +342,32 @@ def _run_pipeline_once() -> int:
                 str(run_dir / "ranking"),
                 "--output-root",
                 str(freeze_output_root),
+            ]
+        )
+
+    if report_enabled:
+        report_dir = report_output_root / run_tag
+        commands.append(
+            [
+                "python3",
+                str(run_script),
+                "build-phase1-report",
+                "--registry-dir",
+                str(build_registry_dir),
+                "--publication-ranking-report",
+                str(run_dir / "ranking" / "ranking_publication_report.json"),
+                "--locus-ranking-report",
+                str(run_dir / "ranking" / "ranking_locus_report.json"),
+                "--disagreement-features",
+                str(run_dir / "scorers" / f"disagreement_features.{ext}"),
+                "--ablation-summary",
+                str(run_dir / "ranking" / "disagreement_ablation_summary.json"),
+                "--output-dir",
+                str(report_dir),
+                "--top-hits-k",
+                str(report_top_hits_k),
+                "--case-study-count",
+                str(report_case_study_count),
             ]
         )
 

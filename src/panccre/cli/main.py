@@ -24,7 +24,7 @@ from panccre.manifests import (
 )
 from panccre.projection import project_fixture_haplotypes
 from panccre.ranking import run_ranking_evaluation
-from panccre.reports import freeze_evaluation
+from panccre.reports import build_phase1_report_bundle, freeze_evaluation
 from panccre.registry import run_registry_build
 from panccre.scorers import (
     run_disagreement_ablation,
@@ -175,6 +175,24 @@ def _add_freeze_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentP
     parser.add_argument("--output-root", default=str(_repo_root() / "data" / "processed"))
 
 
+def _add_report_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
+    parser = subparsers.add_parser("build-phase1-report", help="Build phase-1 report bundle and case-study packets")
+    parser.add_argument("--registry-dir", default=str(_repo_root() / "data" / "registry"))
+    parser.add_argument("--registry-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--validation-links", default=None)
+    parser.add_argument("--validation-links-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--scorer-outputs", default=None)
+    parser.add_argument("--scorer-outputs-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--publication-ranking-report", default=str(_repo_root() / "data" / "processed" / "ranking" / "ranking_publication_report.json"))
+    parser.add_argument("--locus-ranking-report", default=str(_repo_root() / "data" / "processed" / "ranking" / "ranking_locus_report.json"))
+    parser.add_argument("--disagreement-features", default=str(_repo_root() / "data" / "processed" / "scorers" / "disagreement_features.jsonl"))
+    parser.add_argument("--disagreement-features-format", choices=["parquet", "csv", "jsonl"], default=None)
+    parser.add_argument("--ablation-summary", default=str(_repo_root() / "data" / "processed" / "ranking" / "disagreement_ablation_summary.json"))
+    parser.add_argument("--output-dir", default=str(_repo_root() / "data" / "reports" / "latest"))
+    parser.add_argument("--top-hits-k", type=int, default=100)
+    parser.add_argument("--case-study-count", type=int, default=3)
+
+
 def _add_shortlist_parser(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
     parser = subparsers.add_parser("shortlist", help="Build shortlist for expensive scorers")
     parser.add_argument("--feature-matrix", default=str(_repo_root() / "data" / "processed" / "features" / "feature_matrix.jsonl"))
@@ -256,6 +274,7 @@ def _build_parser() -> argparse.ArgumentParser:
     _add_holdout_parser(subparsers)
     _add_ranking_parser(subparsers)
     _add_freeze_parser(subparsers)
+    _add_report_parser(subparsers)
 
     _add_shortlist_parser(subparsers)
     _add_scorer_fanout_parser(subparsers)
@@ -278,6 +297,14 @@ def _artifact_extension(output_format: str) -> str:
     if output_format == "csv":
         return "csv"
     return "parquet"
+
+
+def _discover_artifact(base_dir: Path, stem: str) -> Path:
+    for ext in ("parquet", "jsonl", "csv"):
+        candidate = base_dir / f"{stem}.{ext}"
+        if candidate.exists():
+            return candidate
+    raise FileNotFoundError(f"Artifact not found for stem={stem} in {base_dir}")
 
 
 def _write_run_manifest(
@@ -718,6 +745,65 @@ def _handle_freeze_evaluation(args: argparse.Namespace) -> int:
     return 0
 
 
+def _handle_build_phase1_report(args: argparse.Namespace) -> int:
+    registry_dir = Path(args.registry_dir)
+    registry_path = _discover_artifact(registry_dir, "polymorphic_ccre_registry")
+    validation_links = Path(args.validation_links) if args.validation_links else _discover_artifact(registry_dir, "validation_links")
+    scorer_outputs = Path(args.scorer_outputs) if args.scorer_outputs else _discover_artifact(registry_dir, "scorer_outputs")
+
+    disagreement_features_path = Path(args.disagreement_features)
+    ablation_summary_path = Path(args.ablation_summary)
+
+    result = build_phase1_report_bundle(
+        registry_path=registry_path,
+        registry_format=args.registry_format,
+        validation_links_path=validation_links,
+        validation_links_format=args.validation_links_format,
+        publication_ranking_report_path=args.publication_ranking_report,
+        locus_ranking_report_path=args.locus_ranking_report,
+        disagreement_features_path=disagreement_features_path if disagreement_features_path.exists() else None,
+        disagreement_features_format=args.disagreement_features_format,
+        scorer_outputs_path=scorer_outputs,
+        scorer_outputs_format=args.scorer_outputs_format,
+        ablation_summary_path=ablation_summary_path if ablation_summary_path.exists() else None,
+        output_dir=args.output_dir,
+        top_hits_k=args.top_hits_k,
+        case_study_count=args.case_study_count,
+    )
+
+    run_manifest_path = _write_run_manifest(
+        command_name="build-phase1-report",
+        output_dir=Path(args.output_dir),
+        inputs={
+            "registry": str(registry_path.resolve()),
+            "validation_links": str(validation_links.resolve()),
+            "publication_ranking_report": str(Path(args.publication_ranking_report).resolve()),
+            "locus_ranking_report": str(Path(args.locus_ranking_report).resolve()),
+            "disagreement_features": str(disagreement_features_path.resolve()) if disagreement_features_path.exists() else None,
+            "ablation_summary": str(ablation_summary_path.resolve()) if ablation_summary_path.exists() else None,
+        },
+        params={
+            "registry_format": args.registry_format,
+            "validation_links_format": args.validation_links_format,
+            "disagreement_features_format": args.disagreement_features_format,
+            "top_hits_k": args.top_hits_k,
+            "case_study_count": args.case_study_count,
+        },
+        outputs={
+            "summary_report": str(result.summary_report_path.resolve()),
+            "top_hits_table": str(result.top_hits_path.resolve()),
+            "case_study_dir": str(result.case_study_dir.resolve()),
+            "bundle_manifest": str(result.bundle_manifest_path.resolve()),
+        },
+    )
+
+    print(f"build-phase1-report_complete output_dir={result.output_dir}")
+    print(f"summary_report={result.summary_report_path}")
+    print(f"bundle_manifest={result.bundle_manifest_path}")
+    print(f"run_manifest={run_manifest_path}")
+    return 0
+
+
 def _handle_shortlist(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir)
     extension = _artifact_extension(args.output_format)
@@ -964,6 +1050,8 @@ def main(argv: list[str] | None = None) -> int:
         return _handle_evaluate_ranking(args)
     if args.command == "freeze-evaluation":
         return _handle_freeze_evaluation(args)
+    if args.command == "build-phase1-report":
+        return _handle_build_phase1_report(args)
 
     if args.command == "shortlist":
         return _handle_shortlist(args)

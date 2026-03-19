@@ -1,0 +1,40 @@
+sources:
+  - source_id: encode_ccre_v4
+    name: ENCODE expanded cCRE registry
+    version: "2026-01"
+    download_url: "<replace-with-encode-ccre-url>"
+    license: "public / follow upstream"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "bed"
+    notes: "Primary cCRE reference anchors for phase-1."
+
+  - source_id: pangenome_haplotype_alignments
+    name: Human pangenome haplotype alignments
+    version: "2024-01"
+    download_url: "<replace-with-pangenome-alignment-url>"
+    license: "follow upstream"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "tsv"
+    notes: "Haplotype projection input table."
+
+  - source_id: encode_noncoding_crispri
+    name: ENCODE noncoding CRISPRi compendium
+    version: "2024-05"
+    download_url: "<replace-with-crispri-resource-url>"
+    license: "follow upstream"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "tsv"
+    notes: "Validation labels for assay enrichment and holdouts."
+
+  - source_id: mprabase
+    name: MPRAbase release
+    version: "2025-01"
+    download_url: "<replace-with-mprabase-url>"
+    license: "follow upstream"
+    genome_build: "GRCh38"
+    parser_version: "0.1.0"
+    format: "tsv"
+    notes: "Additional validation labels and assay inventory coverage."
