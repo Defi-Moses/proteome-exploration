@@ -28,6 +28,7 @@ _REQUIRED_MIN_COLUMNS = {
 }
 _YEAR_RE = re.compile(r"(19|20)\d{2}")
 _SOURCE_ID_TOKEN_RE = re.compile(r"[^A-Za-z0-9._-]+")
+_CCRE_EID_RE = re.compile(r"^EH38E")
 _TRUTHY = {"1", "true", "t", "yes", "y"}
 _FALSY = {"0", "false", "f", "no", "n"}
 
@@ -144,7 +145,14 @@ def _build_ccre_bed4(input_path: Path, output_path: Path) -> None:
                 fields = line.split()
             if len(fields) < 4:
                 continue
-            ccre_id = fields[3].strip()
+            ccre_id = ""
+            for token in fields[3:]:
+                candidate = token.strip()
+                if _CCRE_EID_RE.match(candidate):
+                    ccre_id = candidate
+                    break
+            if not ccre_id:
+                ccre_id = fields[3].strip()
             if not ccre_id:
                 continue
             target.write(f"{fields[0]}\t{fields[1]}\t{fields[2]}\t{ccre_id}\n")

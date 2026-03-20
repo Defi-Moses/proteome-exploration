@@ -12,6 +12,22 @@ import panccre.normalize.engreitz as eng
 
 
 class NormalizeEngreitzTests(unittest.TestCase):
+    def test_build_ccre_bed4_prefers_eh38e_token(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp = Path(tmpdir)
+            source = tmp / "ccre.bed"
+            output = tmp / "ccre.bed4"
+            source.write_text(
+                "chr1\t100\t200\tEH38D123\tEH38E999999\tpELS\n"
+                "chr1\t300\t400\tEH38E111111\tCA\n",
+                encoding="utf-8",
+            )
+
+            eng._build_ccre_bed4(source, output)
+            lines = output.read_text(encoding="utf-8").strip().splitlines()
+            self.assertEqual(lines[0], "chr1\t100\t200\tEH38E999999")
+            self.assertEqual(lines[1], "chr1\t300\t400\tEH38E111111")
+
     def test_derives_label_with_regulated_priority(self) -> None:
         self.assertEqual(eng._derive_label("TRUE", "FALSE", 1.0), "hit")
         self.assertEqual(eng._derive_label("FALSE", "TRUE", -1.0), "non-hit")
