@@ -7,3 +7,7 @@ watchPatterns = ["/apps/worker/**", "/src/**", "/scripts/**", "/configs/**", "/t
 startCommand = "PYTHONPATH=/app/src python3 -m panccre.worker.main"
 restartPolicyType = "ON_FAILURE"
 restartPolicyMaxRetries = 10
+
+[deploy.limitOverride.containers]
+cpu = 8
+memoryBytes = 17179869184
