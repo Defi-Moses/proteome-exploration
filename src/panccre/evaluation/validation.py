@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import re
+from typing import Iterator, Mapping
 
 import pandas as pd
 
@@ -112,6 +114,62 @@ def _write_table(frame: pd.DataFrame, path: Path, output_format: str) -> None:
 
 def _entity_id(ccre_id: str, haplotype_id: str) -> str:
     return f"{ccre_id}|{haplotype_id}"
+
+
+def _normalize_assay_row(raw: Mapping[str, object]) -> dict[str, object]:
+    missing = [column for column in ASSAY_SOURCE_COLUMNS if column not in raw]
+    if missing:
+        raise ValueError(f"assay_source row missing required columns: {missing}")
+    return {
+        "ccre_id": str(raw["ccre_id"]),
+        "haplotype_id": str(raw["haplotype_id"]),
+        "study_id": str(raw["study_id"]),
+        "assay_type": str(raw["assay_type"]),
+        "label": str(raw["label"]),
+        "effect_size": float(raw["effect_size"]),
+        "cell_context": str(raw["cell_context"]),
+        "publication_year": int(raw["publication_year"]),
+    }
+
+
+def _iter_state_entity_ids(path: str | Path, *, input_format: str | None = None) -> Iterator[str]:
+    file_path = Path(path)
+    fmt = (input_format or _infer_format_from_path(file_path)).lower()
+
+    if fmt == "jsonl":
+        expected_columns = CCRE_STATE_COLUMNS
+        with file_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                payload = json.loads(text)
+                if not isinstance(payload, dict):
+                    raise ValueError("ccre_state JSONL row must decode to object")
+                actual = list(payload.keys())
+                if actual != expected_columns:
+                    raise ValueError(f"column contract mismatch: expected={expected_columns} actual={actual}")
+                yield _entity_id(str(payload["ccre_id"]), str(payload["haplotype_id"]))
+        return
+
+    if fmt == "csv":
+        with file_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames != CCRE_STATE_COLUMNS:
+                raise ValueError(
+                    f"column contract mismatch: expected={CCRE_STATE_COLUMNS} actual={reader.fieldnames}"
+                )
+            for row in reader:
+                yield _entity_id(str(row["ccre_id"]), str(row["haplotype_id"]))
+        return
+
+    if fmt == "parquet":
+        frame = _read_table(file_path, CCRE_STATE_COLUMNS, input_format="parquet")
+        for record in frame[["ccre_id", "haplotype_id"]].to_dict(orient="records"):
+            yield _entity_id(str(record["ccre_id"]), str(record["haplotype_id"]))
+        return
+
+    raise ValueError("input_format must be one of: parquet, csv, jsonl")
 
 
 def build_validation_link(ccre_state: pd.DataFrame, assay_source: pd.DataFrame) -> pd.DataFrame:
@@ -231,10 +289,40 @@ def run_validation_link_build(
     ccre_state_format: str | None = None,
     assay_source_format: str | None = None,
 ) -> ValidationBuildResult:
-    ccre_state = _read_table(ccre_state_path, CCRE_STATE_COLUMNS, input_format=ccre_state_format)
     assay_source = _read_table(assay_source_path, ASSAY_SOURCE_COLUMNS, input_format=assay_source_format)
+    normalized_assays = [_normalize_assay_row(row.to_dict()) for _, row in assay_source.iterrows()]
+    if not normalized_assays:
+        raise ValueError(f"Input table is empty: {Path(assay_source_path)}")
 
-    link = build_validation_link(ccre_state, assay_source)
+    required_entities = {_entity_id(row["ccre_id"], row["haplotype_id"]) for row in normalized_assays}
+    available_entities: set[str] = set()
+    for entity in _iter_state_entity_ids(ccre_state_path, input_format=ccre_state_format):
+        if entity in required_entities:
+            available_entities.add(entity)
+            if len(available_entities) == len(required_entities):
+                break
+
+    rows: list[dict[str, object]] = []
+    for row in normalized_assays:
+        entity = _entity_id(row["ccre_id"], row["haplotype_id"])
+        if entity not in available_entities:
+            continue
+        rows.append(
+            {
+                "entity_id": entity,
+                "entity_type": "ref_state",
+                "study_id": row["study_id"],
+                "assay_type": row["assay_type"],
+                "label": row["label"],
+                "effect_size": row["effect_size"],
+                "cell_context": row["cell_context"],
+                "publication_year": row["publication_year"],
+                "holdout_group": "unassigned",
+            }
+        )
+
+    link = pd.DataFrame(rows, columns=VALIDATION_LINK_COLUMNS)
+    validate_validation_link(link)
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
