@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import csv
+from dataclasses import dataclass, field
 import gzip
+import json
 from pathlib import Path
 import re
-from typing import Iterator
+from typing import Iterator, TextIO
 
 import pandas as pd
 
@@ -14,7 +16,6 @@ from panccre.ingest import read_ccre_ref
 from panccre.projection.fixture import (
     HAP_PROJECTION_COLUMNS,
     ProjectionResult,
-    build_projection_qc_summary,
     load_haplotype_ids,
     validate_hap_projection_frame,
     write_projection_qc_summary,
@@ -30,6 +31,7 @@ _STATUS_PRIORITY = {
 }
 
 _GENOTYPE_SPLIT_RE = re.compile(r"[\/|]")
+_DEFAULT_STREAM_CHUNK_ROWS = 20_000
 
 
 @dataclass
@@ -37,8 +39,153 @@ class _VariantAggregate:
     map_status: str = "exact"
     event_count: int = 0
     delta_sum: int = 0
-    alt_contig: str | None = None
     has_inversion: bool = False
+
+
+@dataclass
+class _ChromSweepState:
+    next_start_index: int = 0
+    active: list[tuple[int, int]] = field(default_factory=list)
+    last_ref_start: int | None = None
+
+
+@dataclass(frozen=True)
+class _CCREIndex:
+    ccre_ids: list[str]
+    chroms: list[str]
+    starts: list[int]
+    ends: list[int]
+    chrom_to_sorted_anchor_indices: dict[str, list[int]]
+    chrom_to_sorted_starts: dict[str, list[int]]
+
+
+@dataclass
+class _ProjectionSummaryAccumulator:
+    row_count: int = 0
+    map_status_counts: dict[str, int] = field(default_factory=dict)
+    coverage_sum: float = 0.0
+    coverage_min: float | None = None
+    coverage_max: float | None = None
+    seq_identity_sum: float = 0.0
+    seq_identity_min: float | None = None
+    seq_identity_max: float | None = None
+
+    def update(self, *, map_status: str, coverage_frac: float, seq_identity: float) -> None:
+        self.row_count += 1
+        self.map_status_counts[map_status] = self.map_status_counts.get(map_status, 0) + 1
+
+        self.coverage_sum += coverage_frac
+        if self.coverage_min is None or coverage_frac < self.coverage_min:
+            self.coverage_min = coverage_frac
+        if self.coverage_max is None or coverage_frac > self.coverage_max:
+            self.coverage_max = coverage_frac
+
+        self.seq_identity_sum += seq_identity
+        if self.seq_identity_min is None or seq_identity < self.seq_identity_min:
+            self.seq_identity_min = seq_identity
+        if self.seq_identity_max is None or seq_identity > self.seq_identity_max:
+            self.seq_identity_max = seq_identity
+
+    def summary(self, *, unique_ccre_ids: int, unique_haplotype_ids: int) -> dict[str, object]:
+        if self.row_count <= 0:
+            raise ValueError("hap_projection row_count must be > 0")
+
+        return {
+            "row_count": int(self.row_count),
+            "unique_ccre_ids": int(unique_ccre_ids),
+            "unique_haplotype_ids": int(unique_haplotype_ids),
+            "map_status_counts": {
+                status: int(self.map_status_counts[status])
+                for status in sorted(self.map_status_counts)
+            },
+            "coverage_frac": {
+                "min": float(self.coverage_min if self.coverage_min is not None else 0.0),
+                "mean": float(self.coverage_sum / self.row_count),
+                "max": float(self.coverage_max if self.coverage_max is not None else 0.0),
+            },
+            "seq_identity": {
+                "min": float(self.seq_identity_min if self.seq_identity_min is not None else 0.0),
+                "mean": float(self.seq_identity_sum / self.row_count),
+                "max": float(self.seq_identity_max if self.seq_identity_max is not None else 0.0),
+            },
+        }
+
+
+class _ProjectionRowWriter:
+    def __init__(self, *, path: str | Path, output_format: str, chunk_rows: int) -> None:
+        self.path = Path(path)
+        self.output_format = output_format.lower()
+        if self.output_format not in {"parquet", "csv", "jsonl"}:
+            raise ValueError("output_format must be one of: parquet, csv, jsonl")
+
+        if chunk_rows <= 0:
+            raise ValueError("chunk_rows must be > 0")
+        self.chunk_rows = chunk_rows
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._buffer: list[dict[str, object]] = []
+
+        self._json_handle: TextIO | None = None
+        self._csv_handle: TextIO | None = None
+        self._csv_writer: csv.DictWriter | None = None
+        self._parquet_writer = None
+
+        if self.output_format == "jsonl":
+            self._json_handle = self.path.open("w", encoding="utf-8")
+        elif self.output_format == "csv":
+            self._csv_handle = self.path.open("w", encoding="utf-8", newline="")
+            self._csv_writer = csv.DictWriter(
+                self._csv_handle,
+                fieldnames=HAP_PROJECTION_COLUMNS,
+                extrasaction="raise",
+            )
+            self._csv_writer.writeheader()
+        elif self.output_format == "parquet":
+            if not _parquet_available():
+                raise RuntimeError(
+                    "Parquet output requires pyarrow or fastparquet. "
+                    "Install one of those engines or choose --output-format csv/jsonl."
+                )
+
+    def write_row(self, row: dict[str, object]) -> None:
+        self._buffer.append(row)
+        if len(self._buffer) >= self.chunk_rows:
+            self._flush()
+
+    def _flush(self) -> None:
+        if not self._buffer:
+            return
+
+        if self.output_format == "jsonl":
+            assert self._json_handle is not None
+            for row in self._buffer:
+                self._json_handle.write(json.dumps(row, separators=(",", ":")) + "\n")
+        elif self.output_format == "csv":
+            assert self._csv_writer is not None
+            self._csv_writer.writerows(self._buffer)
+        elif self.output_format == "parquet":
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            table = pa.Table.from_pylist(self._buffer)
+            if self._parquet_writer is None:
+                self._parquet_writer = pq.ParquetWriter(str(self.path), table.schema)
+            self._parquet_writer.write_table(table)
+
+        self._buffer.clear()
+
+    def close(self) -> None:
+        self._flush()
+
+        if self._json_handle is not None:
+            self._json_handle.close()
+            self._json_handle = None
+        if self._csv_handle is not None:
+            self._csv_handle.close()
+            self._csv_handle = None
+        if self._parquet_writer is not None:
+            self._parquet_writer.close()
+            self._parquet_writer = None
 
 
 def _parquet_available() -> bool:
@@ -232,28 +379,100 @@ def _select_haplotypes(sample_ids: list[str], haplotypes_path: str | Path | None
     return (requested, indexes)
 
 
+def _build_ccre_index(ccre_ref: pd.DataFrame) -> _CCREIndex:
+    frame = ccre_ref.reset_index(drop=True)
+    ccre_ids = frame["ccre_id"].astype(str).tolist()
+    chroms = frame["chr"].astype(str).tolist()
+    starts = frame["start"].astype(int).tolist()
+    ends = frame["end"].astype(int).tolist()
+
+    chrom_to_anchor_indices: dict[str, list[int]] = {}
+    for anchor_idx, chrom in enumerate(chroms):
+        chrom_to_anchor_indices.setdefault(chrom, []).append(anchor_idx)
+
+    chrom_to_sorted_anchor_indices: dict[str, list[int]] = {}
+    chrom_to_sorted_starts: dict[str, list[int]] = {}
+    for chrom, anchor_indices in chrom_to_anchor_indices.items():
+        sorted_indices = sorted(anchor_indices, key=lambda idx: starts[idx])
+        chrom_to_sorted_anchor_indices[chrom] = sorted_indices
+        chrom_to_sorted_starts[chrom] = [starts[idx] for idx in sorted_indices]
+
+    return _CCREIndex(
+        ccre_ids=ccre_ids,
+        chroms=chroms,
+        starts=starts,
+        ends=ends,
+        chrom_to_sorted_anchor_indices=chrom_to_sorted_anchor_indices,
+        chrom_to_sorted_starts=chrom_to_sorted_starts,
+    )
+
+
+def _overlapping_anchor_indices(
+    *,
+    ccre_index: _CCREIndex,
+    chrom: str,
+    ref_start: int,
+    ref_end: int,
+    sweep_states: dict[str, _ChromSweepState],
+) -> list[int]:
+    starts = ccre_index.chrom_to_sorted_starts.get(chrom)
+    if starts is None:
+        return []
+
+    sorted_anchor_indices = ccre_index.chrom_to_sorted_anchor_indices[chrom]
+    state = sweep_states.get(chrom)
+    if state is None:
+        state = _ChromSweepState()
+        sweep_states[chrom] = state
+
+    if state.last_ref_start is not None and ref_start < state.last_ref_start:
+        # Fallback for non-monotonic variant coordinates within chromosome.
+        state.next_start_index = 0
+        state.active.clear()
+    state.last_ref_start = ref_start
+
+    next_start_index = state.next_start_index
+    starts_len = len(starts)
+    while next_start_index < starts_len and starts[next_start_index] < ref_end:
+        anchor_idx = sorted_anchor_indices[next_start_index]
+        state.active.append((ccre_index.ends[anchor_idx], anchor_idx))
+        next_start_index += 1
+    state.next_start_index = next_start_index
+
+    if not state.active:
+        return []
+
+    next_active: list[tuple[int, int]] = []
+    overlaps: list[int] = []
+    for anchor_end, anchor_idx in state.active:
+        if anchor_end > ref_start:
+            next_active.append((anchor_end, anchor_idx))
+            overlaps.append(anchor_idx)
+
+    state.active = next_active
+    return overlaps
+
+
 def _collect_variant_aggregates(
     *,
-    ccre_ref: pd.DataFrame,
+    ccre_index: _CCREIndex,
     variants_path: str | Path,
     haplotypes_path: str | Path | None,
     max_variants: int | None = None,
-) -> tuple[list[str], dict[tuple[str, str], _VariantAggregate]]:
+) -> tuple[list[str], dict[int, _VariantAggregate]]:
     variant_file = Path(variants_path)
     if not variant_file.exists():
         raise FileNotFoundError(f"Variant file not found: {variant_file}")
     if max_variants is not None and max_variants <= 0:
         raise ValueError("max_variants must be > 0 when provided")
 
-    ccre_by_chr = {
-        str(chrom): frame.reset_index(drop=True)
-        for chrom, frame in ccre_ref.groupby("chr", sort=False)
-    }
-
     sample_ids: list[str] = []
     selected_haplotypes: list[str] | None = None
     selected_indexes: list[int] = []
-    aggregates: dict[tuple[str, str], _VariantAggregate] = {}
+    haplotype_count = 0
+
+    aggregates: dict[int, _VariantAggregate] = {}
+    sweep_states: dict[str, _ChromSweepState] = {}
 
     parsed_variants = 0
     for raw_line in _open_variant_text(variant_file):
@@ -267,6 +486,7 @@ def _collect_variant_aggregates(
                 raise ValueError(f"VCF header has no sample columns: {variant_file}")
             sample_ids = fields[9:]
             selected_haplotypes, selected_indexes = _select_haplotypes(sample_ids, haplotypes_path)
+            haplotype_count = len(selected_haplotypes)
             continue
         if raw_line.startswith("#"):
             continue
@@ -282,8 +502,7 @@ def _collect_variant_aggregates(
             continue
 
         chrom = _normalize_chrom(fields[0])
-        chr_frame = ccre_by_chr.get(chrom)
-        if chr_frame is None:
+        if chrom not in ccre_index.chrom_to_sorted_starts:
             parsed_variants += 1
             continue
 
@@ -298,6 +517,7 @@ def _collect_variant_aggregates(
         if alt_field == ".":
             parsed_variants += 1
             continue
+
         alt_alleles = [token.strip() for token in alt_field.split(",") if token.strip()]
         if not alt_alleles:
             parsed_variants += 1
@@ -305,9 +525,7 @@ def _collect_variant_aggregates(
 
         info = _parse_info_field(fields[7])
         format_keys = fields[8].split(":")
-        gt_index = 0
-        if "GT" in format_keys:
-            gt_index = format_keys.index("GT")
+        gt_index = format_keys.index("GT") if "GT" in format_keys else 0
 
         ref_start = pos - 1
         end_from_info = _parse_int(info.get("END"))
@@ -316,8 +534,14 @@ def _collect_variant_aggregates(
         else:
             ref_end = ref_start + max(len(ref_allele), 1)
 
-        overlaps = chr_frame[(chr_frame["start"] < ref_end) & (chr_frame["end"] > ref_start)]
-        if overlaps.empty:
+        overlapping_anchor_indices = _overlapping_anchor_indices(
+            ccre_index=ccre_index,
+            chrom=chrom,
+            ref_start=ref_start,
+            ref_end=ref_end,
+            sweep_states=sweep_states,
+        )
+        if not overlapping_anchor_indices:
             parsed_variants += 1
             continue
 
@@ -325,9 +549,11 @@ def _collect_variant_aggregates(
         for hap_idx, sample_offset in enumerate(selected_indexes):
             if sample_offset >= len(sample_columns):
                 continue
+
             sample_token = sample_columns[sample_offset]
             sample_fields = sample_token.split(":")
             genotype = sample_fields[gt_index] if gt_index < len(sample_fields) else sample_fields[0]
+
             non_ref_alleles = _parse_non_reference_alleles(genotype)
             if not non_ref_alleles:
                 continue
@@ -347,19 +573,17 @@ def _collect_variant_aggregates(
             if sample_status == "exact":
                 continue
 
-            haplotype_id = selected_haplotypes[hap_idx]
-            for _, ccre_row in overlaps.iterrows():
-                key = (str(ccre_row["ccre_id"]), haplotype_id)
-                aggregate = aggregates.get(key)
+            for anchor_idx in overlapping_anchor_indices:
+                packed_key = anchor_idx * haplotype_count + hap_idx
+                aggregate = aggregates.get(packed_key)
                 if aggregate is None:
                     aggregate = _VariantAggregate()
-                    aggregates[key] = aggregate
+                    aggregates[packed_key] = aggregate
 
                 if _STATUS_PRIORITY[sample_status] > _STATUS_PRIORITY[aggregate.map_status]:
                     aggregate.map_status = sample_status
                 aggregate.event_count += 1
                 aggregate.delta_sum += sample_delta
-                aggregate.alt_contig = chrom
                 aggregate.has_inversion = aggregate.has_inversion or sample_has_inversion
 
         parsed_variants += 1
@@ -373,51 +597,42 @@ def _collect_variant_aggregates(
     return (selected_haplotypes, aggregates)
 
 
-def build_vcf_hap_projection(
+def _iter_projection_rows(
     *,
-    ccre_ref_path: str | Path,
-    variants_path: str | Path,
-    ccre_ref_format: str | None = None,
-    haplotypes_path: str | Path | None = None,
-    max_variants: int | None = None,
-) -> pd.DataFrame:
-    """Build `hap_projection` rows by intersecting cCRE anchors with VCF variants."""
-    ccre_ref = read_ccre_ref(ccre_ref_path, input_format=ccre_ref_format)
-    haplotypes, aggregates = _collect_variant_aggregates(
-        ccre_ref=ccre_ref,
-        variants_path=variants_path,
-        haplotypes_path=haplotypes_path,
-        max_variants=max_variants,
-    )
+    ccre_index: _CCREIndex,
+    haplotypes: list[str],
+    aggregates: dict[int, _VariantAggregate],
+) -> Iterator[dict[str, object]]:
+    haplotype_count = len(haplotypes)
 
-    rows: list[dict[str, object]] = []
-    for _, ccre_row in ccre_ref.reset_index(drop=True).iterrows():
-        ref_chr = str(ccre_row["chr"])
-        ref_start = int(ccre_row["start"])
-        ref_end = int(ccre_row["end"])
+    for anchor_idx, ccre_id in enumerate(ccre_index.ccre_ids):
+        ref_chr = ccre_index.chroms[anchor_idx]
+        ref_start = ccre_index.starts[anchor_idx]
+        ref_end = ccre_index.ends[anchor_idx]
         anchor_width = max(ref_end - ref_start, 1)
-        for haplotype_id in haplotypes:
-            key = (str(ccre_row["ccre_id"]), haplotype_id)
-            aggregate = aggregates.get(key)
+        key_base = anchor_idx * haplotype_count
+
+        for hap_idx, haplotype_id in enumerate(haplotypes):
+            aggregate = aggregates.get(key_base + hap_idx)
             if aggregate is None:
                 map_status = "exact"
                 event_count = 0
                 delta_sum = 0
-                alt_contig: str | None = ref_chr
                 has_inversion = False
             else:
                 map_status = aggregate.map_status
                 event_count = aggregate.event_count
                 delta_sum = aggregate.delta_sum
-                alt_contig = aggregate.alt_contig or ref_chr
                 has_inversion = aggregate.has_inversion
 
             coverage_frac, seq_identity, split_count, copy_count, flank_confidence, orientation = _status_metrics(
-                map_status, max(event_count, 1)
+                map_status,
+                max(event_count, 1),
             )
             if has_inversion and map_status != "absent":
                 orientation = "."
 
+            alt_contig: str | None
             alt_start: int | None
             alt_end: int | None
             if map_status == "absent":
@@ -425,6 +640,7 @@ def build_vcf_hap_projection(
                 alt_start = None
                 alt_end = None
             else:
+                alt_contig = ref_chr
                 shift = max(-10, min(10, delta_sum))
                 alt_start = max(0, ref_start + shift)
 
@@ -443,27 +659,52 @@ def build_vcf_hap_projection(
                     alt_len = anchor_width
                 alt_end = alt_start + alt_len
 
-            rows.append(
-                {
-                    "ccre_id": str(ccre_row["ccre_id"]),
-                    "haplotype_id": haplotype_id,
-                    "ref_chr": ref_chr,
-                    "ref_start": ref_start,
-                    "ref_end": ref_end,
-                    "alt_contig": alt_contig,
-                    "alt_start": alt_start,
-                    "alt_end": alt_end,
-                    "orientation": orientation,
-                    "map_status": map_status,
-                    "coverage_frac": float(coverage_frac),
-                    "seq_identity": float(seq_identity),
-                    "split_count": int(split_count),
-                    "copy_count": int(copy_count),
-                    "flank_synteny_confidence": float(flank_confidence),
-                    "mapping_method": "vcf_projection_v1",
-                }
-            )
+            yield {
+                "ccre_id": ccre_id,
+                "haplotype_id": haplotype_id,
+                "ref_chr": ref_chr,
+                "ref_start": ref_start,
+                "ref_end": ref_end,
+                "alt_contig": alt_contig,
+                "alt_start": alt_start,
+                "alt_end": alt_end,
+                "orientation": orientation,
+                "map_status": map_status,
+                "coverage_frac": float(coverage_frac),
+                "seq_identity": float(seq_identity),
+                "split_count": int(split_count),
+                "copy_count": int(copy_count),
+                "flank_synteny_confidence": float(flank_confidence),
+                "mapping_method": "vcf_projection_v1",
+            }
 
+
+def build_vcf_hap_projection(
+    *,
+    ccre_ref_path: str | Path,
+    variants_path: str | Path,
+    ccre_ref_format: str | None = None,
+    haplotypes_path: str | Path | None = None,
+    max_variants: int | None = None,
+) -> pd.DataFrame:
+    """Build `hap_projection` rows by intersecting cCRE anchors with VCF variants."""
+    ccre_ref = read_ccre_ref(ccre_ref_path, input_format=ccre_ref_format)
+    ccre_index = _build_ccre_index(ccre_ref)
+
+    haplotypes, aggregates = _collect_variant_aggregates(
+        ccre_index=ccre_index,
+        variants_path=variants_path,
+        haplotypes_path=haplotypes_path,
+        max_variants=max_variants,
+    )
+
+    rows = list(
+        _iter_projection_rows(
+            ccre_index=ccre_index,
+            haplotypes=haplotypes,
+            aggregates=aggregates,
+        )
+    )
     frame = pd.DataFrame(rows, columns=HAP_PROJECTION_COLUMNS)
     validate_hap_projection_frame(frame)
     return frame
@@ -479,25 +720,47 @@ def project_vcf_haplotypes(
     ccre_ref_format: str | None = None,
     haplotypes_path: str | Path | None = None,
     max_variants: int | None = None,
+    stream_chunk_rows: int = _DEFAULT_STREAM_CHUNK_ROWS,
 ) -> ProjectionResult:
     """Materialize `hap_projection` rows from a VCF/VCF.GZ variant source."""
-    frame = build_vcf_hap_projection(
-        ccre_ref_path=ccre_ref_path,
+    ccre_ref = read_ccre_ref(ccre_ref_path, input_format=ccre_ref_format)
+    ccre_index = _build_ccre_index(ccre_ref)
+    del ccre_ref
+
+    haplotypes, aggregates = _collect_variant_aggregates(
+        ccre_index=ccre_index,
         variants_path=variants_path,
-        ccre_ref_format=ccre_ref_format,
         haplotypes_path=haplotypes_path,
         max_variants=max_variants,
     )
 
     output_file = Path(output_path)
-    output_file.parent.mkdir(parents=True, exist_ok=True)
-    _write_projection_frame(frame, output_file, output_format)
+    writer = _ProjectionRowWriter(path=output_file, output_format=output_format, chunk_rows=stream_chunk_rows)
+    summary = _ProjectionSummaryAccumulator()
 
-    qc_summary = build_projection_qc_summary(frame)
+    try:
+        for row in _iter_projection_rows(
+            ccre_index=ccre_index,
+            haplotypes=haplotypes,
+            aggregates=aggregates,
+        ):
+            writer.write_row(row)
+            summary.update(
+                map_status=str(row["map_status"]),
+                coverage_frac=float(row["coverage_frac"]),
+                seq_identity=float(row["seq_identity"]),
+            )
+    finally:
+        writer.close()
+
+    qc_summary = summary.summary(
+        unique_ccre_ids=len(ccre_index.ccre_ids),
+        unique_haplotype_ids=len(haplotypes),
+    )
     qc_file = write_projection_qc_summary(qc_summary, qc_summary_path)
 
     return ProjectionResult(
-        row_count=int(frame.shape[0]),
+        row_count=int(summary.row_count),
         output_path=output_file,
         qc_summary_path=qc_file,
         output_format=output_format,
