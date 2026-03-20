@@ -10,4 +10,4 @@ restartPolicyMaxRetries = 10
 
 [deploy.limitOverride.containers]
 cpu = 8
-memoryBytes = 17179869184
+memoryBytes = 34359738368
