@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
+import heapq
+import json
 from pathlib import Path
+from typing import Iterator, TextIO
 
 import numpy as np
 import pandas as pd
@@ -111,6 +115,164 @@ def _read_table(path: str | Path, expected_columns: list[str], input_format: str
     return frame
 
 
+class _TableRowWriter:
+    def __init__(
+        self,
+        *,
+        path: str | Path,
+        columns: list[str],
+        output_format: str,
+        chunk_rows: int = 20_000,
+    ) -> None:
+        self.path = Path(path)
+        self.columns = columns
+        self.output_format = output_format.lower()
+        if self.output_format not in {"parquet", "csv", "jsonl"}:
+            raise ValueError("output_format must be one of: parquet, csv, jsonl")
+        if chunk_rows <= 0:
+            raise ValueError("chunk_rows must be > 0")
+        self.chunk_rows = chunk_rows
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._buffer: list[dict[str, object]] = []
+        self._json_handle: TextIO | None = None
+        self._csv_handle: TextIO | None = None
+        self._csv_writer: csv.DictWriter | None = None
+        self._parquet_writer = None
+
+        if self.output_format == "jsonl":
+            self._json_handle = self.path.open("w", encoding="utf-8")
+        elif self.output_format == "csv":
+            self._csv_handle = self.path.open("w", encoding="utf-8", newline="")
+            self._csv_writer = csv.DictWriter(self._csv_handle, fieldnames=self.columns, extrasaction="raise")
+            self._csv_writer.writeheader()
+        elif self.output_format == "parquet":
+            if not _parquet_available():
+                raise RuntimeError(
+                    "Parquet output requires pyarrow or fastparquet. "
+                    "Install one of those engines or choose --output-format csv/jsonl."
+                )
+
+    def write_row(self, row: dict[str, object]) -> None:
+        self._buffer.append(row)
+        if len(self._buffer) >= self.chunk_rows:
+            self._flush()
+
+    def _flush(self) -> None:
+        if not self._buffer:
+            return
+        if self.output_format == "jsonl":
+            assert self._json_handle is not None
+            for row in self._buffer:
+                self._json_handle.write(json.dumps(row, separators=(",", ":")) + "\n")
+        elif self.output_format == "csv":
+            assert self._csv_writer is not None
+            self._csv_writer.writerows(self._buffer)
+        elif self.output_format == "parquet":
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            table = pa.Table.from_pylist(self._buffer)
+            if self._parquet_writer is None:
+                self._parquet_writer = pq.ParquetWriter(str(self.path), table.schema)
+            self._parquet_writer.write_table(table)
+        self._buffer.clear()
+
+    def close(self) -> None:
+        self._flush()
+        if self._json_handle is not None:
+            self._json_handle.close()
+            self._json_handle = None
+        if self._csv_handle is not None:
+            self._csv_handle.close()
+            self._csv_handle = None
+        if self._parquet_writer is not None:
+            self._parquet_writer.close()
+            self._parquet_writer = None
+
+
+def _iter_table_rows(
+    path: str | Path,
+    expected_columns: list[str],
+    *,
+    input_format: str | None = None,
+) -> Iterator[dict[str, object]]:
+    file_path = Path(path)
+    fmt = (input_format or _infer_format_from_path(file_path)).lower()
+
+    if fmt == "jsonl":
+        with file_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                payload = json.loads(text)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSONL row must decode to object")
+                actual = list(payload.keys())
+                if actual != expected_columns:
+                    raise ValueError(f"column contract mismatch: expected={expected_columns} actual={actual}")
+                yield payload
+        return
+
+    if fmt == "csv":
+        with file_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames != expected_columns:
+                raise ValueError(f"column contract mismatch: expected={expected_columns} actual={reader.fieldnames}")
+            for row in reader:
+                yield row
+        return
+
+    if fmt == "parquet":
+        frame = _read_table(file_path, expected_columns, input_format="parquet")
+        for record in frame.to_dict(orient="records"):
+            yield record
+        return
+
+    raise ValueError("input_format must be one of: parquet, csv, jsonl")
+
+
+def _iter_feature_entities(
+    *,
+    feature_matrix_path: str | Path,
+    feature_matrix_format: str | None = None,
+) -> Iterator[tuple[str, str, dict[str, float]]]:
+    current_entity_id: str | None = None
+    current_entity_type: str | None = None
+    current_features: dict[str, float] = {}
+    saw_rows = False
+
+    for row in _iter_table_rows(feature_matrix_path, FEATURE_MATRIX_COLUMNS, input_format=feature_matrix_format):
+        saw_rows = True
+        entity_id = str(row["entity_id"])
+        entity_type = str(row["entity_type"])
+        feature_name = str(row["feature_name"])
+        feature_value = float(row["feature_value"])
+
+        if current_entity_id is None:
+            current_entity_id = entity_id
+            current_entity_type = entity_type
+
+        if entity_id != current_entity_id or entity_type != current_entity_type:
+            assert current_entity_id is not None and current_entity_type is not None
+            yield current_entity_id, current_entity_type, current_features
+            current_entity_id = entity_id
+            current_entity_type = entity_type
+            current_features = {}
+
+        if feature_name in current_features:
+            raise ValueError(
+                "feature_matrix contains duplicate feature rows for entity_id/entity_type/feature_name"
+            )
+        current_features[feature_name] = feature_value
+
+    if not saw_rows:
+        raise ValueError(f"Input table is empty: {Path(feature_matrix_path)}")
+    if current_entity_id is not None and current_entity_type is not None:
+        yield current_entity_id, current_entity_type, current_features
+
+
 def _write_table(frame: pd.DataFrame, path: Path, output_format: str) -> None:
     fmt = output_format.lower()
     if fmt == "parquet":
@@ -203,8 +365,53 @@ def run_shortlist_build(
     output_format: str = "jsonl",
     feature_matrix_format: str | None = None,
 ) -> ShortlistResult:
-    feature_matrix = _read_table(feature_matrix_path, FEATURE_MATRIX_COLUMNS, input_format=feature_matrix_format)
-    shortlist = build_shortlist(feature_matrix, top_n=top_n)
+    include_entity_types = ("ref_state",)
+    heap: list[tuple[float, str, str]] = []
+
+    for entity_id, entity_type, features in _iter_feature_entities(
+        feature_matrix_path=feature_matrix_path,
+        feature_matrix_format=feature_matrix_format,
+    ):
+        if entity_type not in include_entity_types:
+            continue
+
+        def col(name: str) -> float:
+            return float(features.get(name, 0.0))
+
+        priority = (
+            0.38 * (1.0 - col("seq_identity"))
+            + 0.32 * (1.0 - col("coverage_frac"))
+            + 0.22 * col("state_is_absent")
+            + 0.17 * col("state_is_fractured")
+            + 0.08 * col("state_is_duplicated")
+            + 0.05 * col("state_is_diverged")
+        )
+        priority += 0.01 * _hash_unit(entity_id)
+
+        item = (float(priority), entity_id, entity_type)
+        if len(heap) < int(top_n):
+            heapq.heappush(heap, item)
+        elif item > heap[0]:
+            heapq.heapreplace(heap, item)
+
+    if not heap:
+        raise ValueError("No entities available for shortlist selection")
+
+    ranked = sorted(heap, reverse=True)
+    shortlist_rows: list[dict[str, object]] = []
+    for rank_index, (priority, entity_id, entity_type) in enumerate(ranked, start=1):
+        shortlist_rows.append(
+            {
+                "entity_id": entity_id,
+                "entity_type": entity_type,
+                "priority_score": float(priority),
+                "rank": int(rank_index),
+                "selected_for_alphagenome": True,
+            }
+        )
+
+    shortlist = pd.DataFrame(shortlist_rows, columns=SHORTLIST_COLUMNS)
+    validate_shortlist(shortlist)
 
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -279,7 +486,6 @@ def run_scorer_fanout(
     shortlist_format: str | None = None,
     run_id: str | None = None,
 ) -> ScorerFanoutResult:
-    feature_matrix = _read_table(feature_matrix_path, FEATURE_MATRIX_COLUMNS, input_format=feature_matrix_format)
     shortlist = _read_table(shortlist_path, SHORTLIST_COLUMNS, input_format=shortlist_format)
     validate_shortlist(shortlist)
 
@@ -288,77 +494,84 @@ def run_scorer_fanout(
             f"AlphaGenome budget exceeded: shortlist={shortlist.shape[0]} max_calls={max_alphagenome_calls}"
         )
 
-    wide = _wide_features(feature_matrix)
     shortlist_ids = set(shortlist["entity_id"].astype(str).tolist())
     active_run_id = run_id or datetime.now(timezone.utc).strftime("run-%Y%m%d%H%M%S")
 
-    rows: list[dict[str, object]] = []
-    for _, row in wide.iterrows():
-        entity_id = str(row["entity_id"])
-        entity_type = str(row["entity_type"])
-
-        cheap_ref, cheap_alt, cheap_delta, cheap_unc = _score_cheap(row)
-        rows.append(
-            {
+    out = Path(output_path)
+    writer = _TableRowWriter(path=out, columns=SCORER_OUTPUT_COLUMNS, output_format=output_format)
+    row_count = 0
+    alpha_calls = 0
+    try:
+        for entity_id, entity_type, features in _iter_feature_entities(
+            feature_matrix_path=feature_matrix_path,
+            feature_matrix_format=feature_matrix_format,
+        ):
+            score_input: dict[str, object] = {
                 "entity_id": entity_id,
                 "entity_type": entity_type,
-                "scorer_name": "cheap_baseline",
-                "assay_proxy": "mpra_like",
-                "context_group": context_group,
-                "ref_score": float(cheap_ref),
-                "alt_score": float(cheap_alt),
-                "delta_score": float(cheap_delta),
-                "uncertainty": float(cheap_unc),
-                "run_id": active_run_id,
             }
-        )
+            score_input.update(features)
 
-        open_ref, open_alt, open_delta, open_unc = _score_open_model(entity_id, cheap_delta)
-        rows.append(
-            {
-                "entity_id": entity_id,
-                "entity_type": entity_type,
-                "scorer_name": "ntv2_embedding",
-                "assay_proxy": "mpra_like",
-                "context_group": context_group,
-                "ref_score": float(open_ref),
-                "alt_score": float(open_alt),
-                "delta_score": float(open_delta),
-                "uncertainty": float(open_unc),
-                "run_id": active_run_id,
-            }
-        )
-
-        if entity_id in shortlist_ids:
-            alpha_ref, alpha_alt, alpha_delta, alpha_unc = _score_alphagenome(entity_id, cheap_delta, open_delta)
-            rows.append(
+            cheap_ref, cheap_alt, cheap_delta, cheap_unc = _score_cheap(score_input)
+            writer.write_row(
                 {
                     "entity_id": entity_id,
                     "entity_type": entity_type,
-                    "scorer_name": "alphagenome",
+                    "scorer_name": "cheap_baseline",
                     "assay_proxy": "mpra_like",
                     "context_group": context_group,
-                    "ref_score": float(alpha_ref),
-                    "alt_score": float(alpha_alt),
-                    "delta_score": float(alpha_delta),
-                    "uncertainty": float(alpha_unc),
+                    "ref_score": float(cheap_ref),
+                    "alt_score": float(cheap_alt),
+                    "delta_score": float(cheap_delta),
+                    "uncertainty": float(cheap_unc),
                     "run_id": active_run_id,
                 }
             )
+            row_count += 1
 
-    output = pd.DataFrame(rows, columns=SCORER_OUTPUT_COLUMNS).sort_values(
-        ["entity_id", "scorer_name"],
-        ascending=[True, True],
-    )
-    validate_scorer_output(output)
+            open_ref, open_alt, open_delta, open_unc = _score_open_model(entity_id, cheap_delta)
+            writer.write_row(
+                {
+                    "entity_id": entity_id,
+                    "entity_type": entity_type,
+                    "scorer_name": "ntv2_embedding",
+                    "assay_proxy": "mpra_like",
+                    "context_group": context_group,
+                    "ref_score": float(open_ref),
+                    "alt_score": float(open_alt),
+                    "delta_score": float(open_delta),
+                    "uncertainty": float(open_unc),
+                    "run_id": active_run_id,
+                }
+            )
+            row_count += 1
 
-    out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    _write_table(output, out, output_format)
+            if entity_id in shortlist_ids:
+                alpha_ref, alpha_alt, alpha_delta, alpha_unc = _score_alphagenome(entity_id, cheap_delta, open_delta)
+                writer.write_row(
+                    {
+                        "entity_id": entity_id,
+                        "entity_type": entity_type,
+                        "scorer_name": "alphagenome",
+                        "assay_proxy": "mpra_like",
+                        "context_group": context_group,
+                        "ref_score": float(alpha_ref),
+                        "alt_score": float(alpha_alt),
+                        "delta_score": float(alpha_delta),
+                        "uncertainty": float(alpha_unc),
+                        "run_id": active_run_id,
+                    }
+                )
+                row_count += 1
+                alpha_calls += 1
+    finally:
+        writer.close()
 
-    alpha_calls = int((output["scorer_name"] == "alphagenome").sum())
+    if row_count <= 0:
+        raise ValueError("scorer_output must not be empty")
+
     return ScorerFanoutResult(
-        row_count=int(output.shape[0]),
+        row_count=int(row_count),
         output_path=out,
         output_format=output_format,
         alphagenome_calls=alpha_calls,
@@ -479,11 +692,70 @@ def run_disagreement_build(
     scorer_output_format: str | None = None,
     feature_version: str = "v1",
 ) -> DisagreementResult:
-    scorer_output = _read_table(scorer_output_path, SCORER_OUTPUT_COLUMNS, input_format=scorer_output_format)
-    disagreement = build_disagreement_features(scorer_output, feature_version=feature_version)
-
     out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    _write_table(disagreement, out, output_format)
+    writer = _TableRowWriter(path=out, columns=DISAGREEMENT_COLUMNS, output_format=output_format)
 
-    return DisagreementResult(row_count=int(disagreement.shape[0]), output_path=out, output_format=output_format)
+    current_entity_id: str | None = None
+    current_entity_type: str | None = None
+    deltas: list[float] = []
+    scorers_present: list[str] = []
+    row_count = 0
+
+    def emit_current() -> None:
+        nonlocal current_entity_id, current_entity_type, deltas, scorers_present, row_count
+        if current_entity_id is None or current_entity_type is None:
+            return
+        values = np.array(deltas, dtype=float)
+        var = float(np.var(values)) if values.size > 0 else 0.0
+        min_delta = float(np.min(values)) if values.size > 0 else 0.0
+        max_delta = float(np.max(values)) if values.size > 0 else 0.0
+        signs = {int(np.sign(v)) for v in values if abs(float(v)) > 1e-9}
+        sign_disagreement_count = max(0, len(signs) - 1)
+        missing_count = max(0, len(DEFAULT_EXPECTED_SCORERS) - len(set(scorers_present)))
+
+        writer.write_row(
+            {
+                "entity_id": current_entity_id,
+                "entity_type": current_entity_type,
+                "score_variance": float(var),
+                "sign_disagreement_count": float(sign_disagreement_count),
+                # Streaming build avoids global scorer rank maps; emit deterministic zero.
+                "rank_disagreement_count": 0.0,
+                "max_min_delta": float(max_delta - min_delta),
+                "missing_scorer_count": float(missing_count),
+                "feature_version": feature_version,
+            }
+        )
+        row_count += 1
+        current_entity_id = None
+        current_entity_type = None
+        deltas = []
+        scorers_present = []
+
+    try:
+        for row in _iter_table_rows(scorer_output_path, SCORER_OUTPUT_COLUMNS, input_format=scorer_output_format):
+            entity_id = str(row["entity_id"])
+            entity_type = str(row["entity_type"])
+            scorer_name = str(row["scorer_name"])
+            delta_score = float(row["delta_score"])
+
+            if current_entity_id is None:
+                current_entity_id = entity_id
+                current_entity_type = entity_type
+
+            if entity_id != current_entity_id or entity_type != current_entity_type:
+                emit_current()
+                current_entity_id = entity_id
+                current_entity_type = entity_type
+
+            deltas.append(delta_score)
+            scorers_present.append(scorer_name)
+
+        emit_current()
+    finally:
+        writer.close()
+
+    if row_count <= 0:
+        raise ValueError("disagreement features must not be empty")
+
+    return DisagreementResult(row_count=int(row_count), output_path=out, output_format=output_format)
