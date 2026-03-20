@@ -1,0 +1,4 @@
+interface:
+  display_name: "Incremental Pipeline Runner"
+  short_description: "Run only impacted pipeline stages safely"
+  default_prompt: "Execute minimal stage subsets while preserving artifact contract safety."

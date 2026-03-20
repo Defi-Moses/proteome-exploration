@@ -1,0 +1,4 @@
+interface:
+  display_name: "Railway DevOps"
+  short_description: "Speed up Railway deploy, logs, and incident triage"
+  default_prompt: "Use this skill to deploy services, inspect logs, and debug Railway runtime issues quickly."

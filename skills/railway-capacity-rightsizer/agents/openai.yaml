@@ -1,0 +1,4 @@
+interface:
+  display_name: "Railway Capacity Rightsizer"
+  short_description: "Recommend CPU and memory from run evidence"
+  default_prompt: "Recommend Railway worker capacity from benchmark and memory evidence."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Worker Failure Triage"
+  short_description: "Diagnose worker failures and suggest next actions"
+  default_prompt: "Parse worker failures and generate root-cause-oriented next steps."

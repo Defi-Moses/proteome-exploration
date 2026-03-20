@@ -1,0 +1,4 @@
+interface:
+  display_name: "Pipeline Readiness Gate"
+  short_description: "Fail fast on bad pipeline run configuration"
+  default_prompt: "Validate run prerequisites and block misconfigured pipeline executions."

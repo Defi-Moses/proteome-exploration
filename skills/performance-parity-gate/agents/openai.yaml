@@ -1,0 +1,4 @@
+interface:
+  display_name: "Performance Parity Gate"
+  short_description: "Guard speed gains with strict parity checks"
+  default_prompt: "Run performance + parity gates before merge or deploy."

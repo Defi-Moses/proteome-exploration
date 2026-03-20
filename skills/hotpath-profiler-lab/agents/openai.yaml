@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hotpath Profiler Lab"
+  short_description: "Profile hot paths and benchmark iteration speed"
+  default_prompt: "Benchmark and profile hot pipeline stages with reproducible artifacts."

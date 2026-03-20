@@ -1,0 +1,4 @@
+interface:
+  display_name: "Optimization Playbook"
+  short_description: "Standardize safe speed optimization workflows"
+  default_prompt: "Apply optimization patterns with evidence and quality gates."
