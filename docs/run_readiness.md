@@ -28,9 +28,17 @@ Run command (one-shot):
 - Set it back to `heartbeat` or `pipeline_loop` per operating preference
 
 2026-03-20 update:
-- `project-vcf` now completes with real ENCODE + HPRC inputs after streaming/chunked rewrite.
-- New first failure boundary is `call-states`, which currently materializes full
-  `hap_projection` in memory and OOMs (`exit=-9`) on the same run.
+- `project-vcf` completes with real ENCODE + HPRC inputs after streaming/chunked rewrite.
+- `call-states` was rewritten to stream `hap_projection` and now completes on full real inputs.
+- `discover-candidates` was rewritten to stream `ccre_state` and now completes on full real inputs.
+- `featurize` was rewritten to stream `ccre_state` + candidates and no longer materializes full feature matrices in memory.
+- `build-validation-link` was rewritten to stream `ccre_state` entity IDs against assay entities and no longer OOMs.
+- `evaluate-ranking` now streams `feature_matrix` and only keeps validation-linked entities in memory.
+- `shortlist`, `score-fanout`, and `compute-disagreement` now run with streaming/chunked IO paths to avoid full-table materialization.
+
+Operational caveat:
+- `/data` can fill from historical pipeline run artifacts (`/data/runs`), which can surface as `Errno 28` ("No space left on device") even when memory is healthy.
+- For validation runs, use `PANCCRE_PIPELINE_OUTPUT_ROOT=/tmp/runs` (ephemeral large disk) or prune old `/data/runs/*` artifacts before rerunning.
 
 ## 2) Biological Full Run (all major inputs are real and validated)
 
