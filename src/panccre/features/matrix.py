@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from typing import Iterator, Mapping, TextIO
 
 import pandas as pd
 
@@ -18,6 +20,8 @@ FEATURE_MATRIX_COLUMNS = [
     "feature_value",
     "feature_version",
 ]
+
+_DEFAULT_FEATURE_STREAM_CHUNK_ROWS = 20_000
 
 
 @dataclass(frozen=True)
@@ -33,6 +37,82 @@ def _parquet_available() -> bool:
         return True
     except Exception:
         return False
+
+
+class _FeatureRowWriter:
+    def __init__(self, *, path: str | Path, output_format: str, chunk_rows: int) -> None:
+        self.path = Path(path)
+        self.output_format = output_format.lower()
+        if self.output_format not in {"parquet", "csv", "jsonl"}:
+            raise ValueError("output_format must be one of: parquet, csv, jsonl")
+
+        if chunk_rows <= 0:
+            raise ValueError("chunk_rows must be > 0")
+        self.chunk_rows = chunk_rows
+
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._buffer: list[dict[str, object]] = []
+        self._json_handle: TextIO | None = None
+        self._csv_handle: TextIO | None = None
+        self._csv_writer: csv.DictWriter | None = None
+        self._parquet_writer = None
+
+        if self.output_format == "jsonl":
+            self._json_handle = self.path.open("w", encoding="utf-8")
+        elif self.output_format == "csv":
+            self._csv_handle = self.path.open("w", encoding="utf-8", newline="")
+            self._csv_writer = csv.DictWriter(
+                self._csv_handle,
+                fieldnames=FEATURE_MATRIX_COLUMNS,
+                extrasaction="raise",
+            )
+            self._csv_writer.writeheader()
+        elif self.output_format == "parquet":
+            if not _parquet_available():
+                raise RuntimeError(
+                    "Parquet output requires pyarrow or fastparquet. "
+                    "Install one of those engines or choose --output-format csv/jsonl."
+                )
+
+    def write_row(self, row: dict[str, object]) -> None:
+        self._buffer.append(row)
+        if len(self._buffer) >= self.chunk_rows:
+            self._flush()
+
+    def _flush(self) -> None:
+        if not self._buffer:
+            return
+
+        if self.output_format == "jsonl":
+            assert self._json_handle is not None
+            for row in self._buffer:
+                self._json_handle.write(json.dumps(row, separators=(",", ":")) + "\n")
+        elif self.output_format == "csv":
+            assert self._csv_writer is not None
+            self._csv_writer.writerows(self._buffer)
+        elif self.output_format == "parquet":
+            import pyarrow as pa
+            import pyarrow.parquet as pq
+
+            table = pa.Table.from_pylist(self._buffer)
+            if self._parquet_writer is None:
+                self._parquet_writer = pq.ParquetWriter(str(self.path), table.schema)
+            self._parquet_writer.write_table(table)
+
+        self._buffer.clear()
+
+    def close(self) -> None:
+        self._flush()
+
+        if self._json_handle is not None:
+            self._json_handle.close()
+            self._json_handle = None
+        if self._csv_handle is not None:
+            self._csv_handle.close()
+            self._csv_handle = None
+        if self._parquet_writer is not None:
+            self._parquet_writer.close()
+            self._parquet_writer = None
 
 
 def _infer_format_from_path(path: Path) -> str:
@@ -69,7 +149,79 @@ def _read_table(path: str | Path, expected_columns: list[str], input_format: str
     return frame
 
 
-def _state_features(state_row: pd.Series, feature_version: str) -> list[dict[str, object]]:
+def _normalize_state_row(raw: Mapping[str, object]) -> dict[str, object]:
+    missing = [column for column in CCRE_STATE_COLUMNS if column not in raw]
+    if missing:
+        raise ValueError(f"ccre_state row missing required columns: {missing}")
+    return {
+        "ccre_id": str(raw["ccre_id"]),
+        "haplotype_id": str(raw["haplotype_id"]),
+        "state_class": str(raw["state_class"]),
+        "state_reason": str(raw["state_reason"]),
+    }
+
+
+def _normalize_candidate_row(raw: Mapping[str, object]) -> dict[str, object]:
+    missing = [column for column in REPLACEMENT_CANDIDATE_COLUMNS if column not in raw]
+    if missing:
+        raise ValueError(f"replacement_candidate row missing required columns: {missing}")
+    return {
+        "candidate_id": str(raw["candidate_id"]),
+        "repeat_class": str(raw["repeat_class"]),
+        "seq_len": float(raw["seq_len"]),
+        "gc_content": float(raw["gc_content"]),
+        "motif_count": float(raw["motif_count"]),
+        "nearest_gene_distance": float(raw["nearest_gene_distance"]),
+    }
+
+
+def _iter_table_rows(
+    path: str | Path,
+    expected_columns: list[str],
+    *,
+    input_format: str | None = None,
+) -> Iterator[dict[str, object]]:
+    file_path = Path(path)
+    fmt = (input_format or _infer_format_from_path(file_path)).lower()
+
+    if fmt == "jsonl":
+        with file_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                payload = json.loads(text)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSONL row must decode to object")
+                actual = list(payload.keys())
+                if actual != expected_columns:
+                    raise ValueError(
+                        f"column contract mismatch: expected={expected_columns} actual={actual}"
+                    )
+                yield payload
+        return
+
+    if fmt == "csv":
+        with file_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames != expected_columns:
+                raise ValueError(
+                    f"column contract mismatch: expected={expected_columns} actual={reader.fieldnames}"
+                )
+            for row in reader:
+                yield row
+        return
+
+    if fmt == "parquet":
+        frame = _read_table(file_path, expected_columns, input_format="parquet")
+        for record in frame.to_dict(orient="records"):
+            yield record
+        return
+
+    raise ValueError("input_format must be one of: parquet, csv, jsonl")
+
+
+def _state_features(state_row: Mapping[str, object], feature_version: str) -> list[dict[str, object]]:
     reason = json.loads(str(state_row["state_reason"]))
     entity_id = f"{state_row['ccre_id']}|{state_row['haplotype_id']}"
     state_class = str(state_row["state_class"])
@@ -89,7 +241,7 @@ def _state_features(state_row: pd.Series, feature_version: str) -> list[dict[str
     return features
 
 
-def _candidate_features(candidate_row: pd.Series, feature_version: str) -> list[dict[str, object]]:
+def _candidate_features(candidate_row: Mapping[str, object], feature_version: str) -> list[dict[str, object]]:
     entity_id = str(candidate_row["candidate_id"])
     repeat_class = str(candidate_row["repeat_class"])
 
@@ -172,21 +324,44 @@ def run_feature_build(
     ccre_state_format: str | None = None,
     replacement_candidate_format: str | None = None,
     feature_version: str = "v1",
+    stream_chunk_rows: int = _DEFAULT_FEATURE_STREAM_CHUNK_ROWS,
 ) -> FeatureBuildResult:
-    state = _read_table(ccre_state_path, CCRE_STATE_COLUMNS, input_format=ccre_state_format)
-    candidates = _read_table(
-        replacement_candidate_path,
-        REPLACEMENT_CANDIDATE_COLUMNS,
-        input_format=replacement_candidate_format,
-    )
-    matrix = build_feature_matrix(state, candidates, feature_version=feature_version)
-
     out = Path(output_path)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    _write_frame(matrix, out, output_format)
+    writer = _FeatureRowWriter(path=out, output_format=output_format, chunk_rows=stream_chunk_rows)
+    row_count = 0
 
-    return FeatureBuildResult(
-        row_count=int(matrix.shape[0]),
-        output_path=out,
-        output_format=output_format,
-    )
+    try:
+        state_seen = False
+        for raw_row in _iter_table_rows(
+            ccre_state_path,
+            CCRE_STATE_COLUMNS,
+            input_format=ccre_state_format,
+        ):
+            state_seen = True
+            state_row = _normalize_state_row(raw_row)
+            for feature_row in _state_features(state_row, feature_version):
+                writer.write_row(feature_row)
+                row_count += 1
+        if not state_seen:
+            raise ValueError(f"Input table is empty: {Path(ccre_state_path)}")
+
+        candidate_seen = False
+        for raw_row in _iter_table_rows(
+            replacement_candidate_path,
+            REPLACEMENT_CANDIDATE_COLUMNS,
+            input_format=replacement_candidate_format,
+        ):
+            candidate_seen = True
+            candidate_row = _normalize_candidate_row(raw_row)
+            for feature_row in _candidate_features(candidate_row, feature_version):
+                writer.write_row(feature_row)
+                row_count += 1
+        if not candidate_seen:
+            raise ValueError(f"Input table is empty: {Path(replacement_candidate_path)}")
+    finally:
+        writer.close()
+
+    if row_count <= 0:
+        raise ValueError("feature_matrix must not be empty")
+
+    return FeatureBuildResult(row_count=int(row_count), output_path=out, output_format=output_format)
