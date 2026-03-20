@@ -4,7 +4,7 @@ As of 2026-03-19, readiness depends on what "full run" means.
 
 ## 1) Infrastructure Full Run (end-to-end pipeline execution)
 
-Status: **Ready**
+Status: **Partially ready**
 
 Definition:
 - Worker executes the full pipeline chain through registry publish.
@@ -26,6 +26,11 @@ Run command (one-shot):
 - Set worker variable `PANCCRE_WORKER_MODE=pipeline_once`
 - Wait for completion in worker logs
 - Set it back to `heartbeat` or `pipeline_loop` per operating preference
+
+2026-03-20 update:
+- `project-vcf` now completes with real ENCODE + HPRC inputs after streaming/chunked rewrite.
+- New first failure boundary is `call-states`, which currently materializes full
+  `hap_projection` in memory and OOMs (`exit=-9`) on the same run.
 
 ## 2) Biological Full Run (all major inputs are real and validated)
 
