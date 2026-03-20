@@ -24,6 +24,7 @@ CCRE_REF_COLUMNS = [
 
 _ALLOWED_STRANDS = {"+", "-", "."}
 _CHROM_RE = re.compile(r"^chr([1-9]|1[0-9]|2[0-2]|X|Y|M|MT)$")
+_CCRE_EID_RE = re.compile(r"^EH38E")
 
 
 @dataclass(frozen=True)
@@ -117,22 +118,43 @@ def parse_ccre_bed(
             if end <= start:
                 raise ValueError(f"{line_context} end must be greater than start")
 
-            ccre_id = fields[3].strip()
+            ccre_id = ""
+            for token in fields[3:6]:
+                candidate = token.strip()
+                if _CCRE_EID_RE.match(candidate):
+                    ccre_id = candidate
+                    break
+            if not ccre_id:
+                ccre_id = fields[3].strip()
             if not ccre_id:
                 raise ValueError(f"{line_context} ccre_id must be non-empty")
             if ccre_id in seen_ccre_ids:
                 raise ValueError(f"{line_context} duplicate ccre_id detected: {ccre_id}")
             seen_ccre_ids.add(ccre_id)
 
-            strand = fields[5].strip() if len(fields) >= 6 and fields[5].strip() else "."
-            _validate_strand(strand, line_context)
+            # Accept both legacy fixture BED schema and ENCODE V4 SCREEN schema.
+            # Fixture-like: chr start end ccre_id score strand ccre_class biosample_count
+            # SCREEN-like:  chr start end anchor_id ccre_id ccre_class [biosample_count...]
+            strand = "."
+            ccre_class = "unknown"
+            biosample_field_index: int | None = None
 
-            ccre_class = fields[6].strip() if len(fields) >= 7 and fields[6].strip() else "unknown"
+            if len(fields) >= 6 and fields[5].strip():
+                field5 = fields[5].strip()
+                if field5 in _ALLOWED_STRANDS:
+                    strand = field5
+                    _validate_strand(strand, line_context)
+                    if len(fields) >= 7 and fields[6].strip():
+                        ccre_class = fields[6].strip()
+                    biosample_field_index = 7
+                else:
+                    ccre_class = field5
+                    biosample_field_index = 6
 
             biosample_count = 0
-            if len(fields) >= 8 and fields[7].strip():
+            if biosample_field_index is not None and len(fields) > biosample_field_index and fields[biosample_field_index].strip():
                 try:
-                    biosample_count = int(fields[7])
+                    biosample_count = int(fields[biosample_field_index])
                 except ValueError as exc:
                     raise ValueError(f"{line_context} biosample_count must be an integer") from exc
             if biosample_count < 0:

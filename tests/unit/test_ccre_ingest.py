@@ -105,6 +105,29 @@ class CCREIngestTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_ccre_bed(bed, context_group="immune_hematopoietic", source_release="fixture")
 
+    def test_parse_supports_encode_screen_v4_layout(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bed = Path(tmpdir) / "screen_v4.bed"
+            bed.write_text(
+                "chr1\t10033\t10250\tEH38D4327497\tEH38E2776516\tpELS\n"
+                "chr1\t10385\t10713\tEH38D4327498\tEH38E2776517\tdELS\t12\n",
+                encoding="utf-8",
+            )
+            rows = parse_ccre_bed(
+                bed,
+                context_group="immune_hematopoietic",
+                source_release="encode-v4-2026-01",
+            )
+
+            self.assertEqual(len(rows), 2)
+            self.assertEqual(rows[0].ccre_id, "EH38E2776516")
+            self.assertEqual(rows[0].strand, ".")
+            self.assertEqual(rows[0].ccre_class, "pELS")
+            self.assertEqual(rows[0].biosample_count, 0)
+            self.assertEqual(rows[1].ccre_id, "EH38E2776517")
+            self.assertEqual(rows[1].ccre_class, "dELS")
+            self.assertEqual(rows[1].biosample_count, 12)
+
     def test_validate_ccre_ref_frame_rejects_contract_drift(self) -> None:
         frame = pd.DataFrame(
             [
