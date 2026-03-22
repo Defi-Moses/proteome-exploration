@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass
 import json
 from pathlib import Path
+from typing import Iterator, Mapping
 
 import pandas as pd
 
@@ -61,6 +63,48 @@ def _read_table(path: str | Path, expected_columns: list[str], input_format: str
     return frame
 
 
+def _iter_table_rows(
+    path: str | Path,
+    expected_columns: list[str],
+    *,
+    input_format: str | None = None,
+) -> Iterator[Mapping[str, object]]:
+    file_path = Path(path)
+    fmt = (input_format or _infer_format_from_path(file_path)).lower()
+
+    if fmt == "jsonl":
+        with file_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                payload = json.loads(text)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSONL row must decode to object")
+                actual = list(payload.keys())
+                if actual != expected_columns:
+                    raise ValueError(f"column contract mismatch: expected={expected_columns} actual={actual}")
+                yield payload
+        return
+
+    if fmt == "csv":
+        with file_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames != expected_columns:
+                raise ValueError(f"column contract mismatch: expected={expected_columns} actual={reader.fieldnames}")
+            for row in reader:
+                yield row
+        return
+
+    if fmt == "parquet":
+        frame = _read_table(file_path, expected_columns, input_format="parquet")
+        for record in frame.to_dict(orient="records"):
+            yield record
+        return
+
+    raise ValueError("input_format must be one of: parquet, csv, jsonl")
+
+
 def _metric_lift(base: dict[str, object], enriched: dict[str, object]) -> dict[str, object]:
     lift: dict[str, object] = {"top_k": {}, "pr_auc": {}}
 
@@ -88,9 +132,49 @@ def run_disagreement_ablation(
     validation_link_format: str | None = None,
     disagreement_format: str | None = None,
 ) -> AblationResult:
-    feature_matrix = _read_table(feature_matrix_path, FEATURE_MATRIX_COLUMNS, input_format=feature_matrix_format)
     validation_link = _read_table(validation_link_path, VALIDATION_LINK_COLUMNS, input_format=validation_link_format)
-    disagreement = _read_table(disagreement_path, DISAGREEMENT_COLUMNS, input_format=disagreement_format)
+    required_entity_ids = set(validation_link["entity_id"].astype(str).tolist())
+
+    feature_rows: list[dict[str, object]] = []
+    for row in _iter_table_rows(feature_matrix_path, FEATURE_MATRIX_COLUMNS, input_format=feature_matrix_format):
+        if str(row["entity_type"]) != "ref_state":
+            continue
+        if str(row["entity_id"]) not in required_entity_ids:
+            continue
+        feature_rows.append(
+            {
+                "entity_id": str(row["entity_id"]),
+                "entity_type": str(row["entity_type"]),
+                "feature_name": str(row["feature_name"]),
+                "feature_value": float(row["feature_value"]),
+                "feature_version": str(row["feature_version"]),
+            }
+        )
+    feature_matrix = pd.DataFrame(feature_rows, columns=FEATURE_MATRIX_COLUMNS)
+    if feature_matrix.empty:
+        raise ValueError("No overlapping ref_state features found for validation_link entity_ids")
+
+    disagreement_rows: list[dict[str, object]] = []
+    for row in _iter_table_rows(disagreement_path, DISAGREEMENT_COLUMNS, input_format=disagreement_format):
+        if str(row["entity_type"]) != "ref_state":
+            continue
+        if str(row["entity_id"]) not in required_entity_ids:
+            continue
+        disagreement_rows.append(
+            {
+                "entity_id": str(row["entity_id"]),
+                "entity_type": str(row["entity_type"]),
+                "score_variance": float(row["score_variance"]),
+                "sign_disagreement_count": float(row["sign_disagreement_count"]),
+                "rank_disagreement_count": float(row["rank_disagreement_count"]),
+                "max_min_delta": float(row["max_min_delta"]),
+                "missing_scorer_count": float(row["missing_scorer_count"]),
+                "feature_version": str(row["feature_version"]),
+            }
+        )
+    disagreement = pd.DataFrame(disagreement_rows, columns=DISAGREEMENT_COLUMNS)
+    if disagreement.empty:
+        raise ValueError("No overlapping disagreement rows found for validation_link entity_ids")
 
     base_metrics, _ = evaluate_cheap_baselines(feature_matrix, validation_link)
 

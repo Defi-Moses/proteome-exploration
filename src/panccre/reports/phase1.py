@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import csv
+from collections import Counter, defaultdict
 from dataclasses import dataclass
+import heapq
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator, Mapping
 
 import pandas as pd
 
@@ -63,6 +66,51 @@ def _read_table(path: str | Path, required_columns: list[str], *, input_format: 
     if frame.empty:
         raise ValueError(f"Input table is empty: {file_path}")
     return frame
+
+
+def _iter_table_rows(
+    path: str | Path,
+    required_columns: list[str],
+    *,
+    input_format: str | None = None,
+) -> Iterator[dict[str, object]]:
+    file_path = Path(path)
+    fmt = (input_format or _infer_format(file_path)).lower()
+
+    if fmt == "jsonl":
+        with file_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                text = line.strip()
+                if not text:
+                    continue
+                payload = json.loads(text)
+                if not isinstance(payload, dict):
+                    raise ValueError("JSONL row must decode to object")
+                missing = [column for column in required_columns if column not in payload]
+                if missing:
+                    raise ValueError(f"Missing required columns in {file_path}: {missing}")
+                yield payload
+        return
+
+    if fmt == "csv":
+        with file_path.open("r", encoding="utf-8", newline="") as handle:
+            reader = csv.DictReader(handle)
+            if reader.fieldnames is None:
+                raise ValueError(f"Missing header row in CSV: {file_path}")
+            missing = [column for column in required_columns if column not in reader.fieldnames]
+            if missing:
+                raise ValueError(f"Missing required columns in {file_path}: {missing}")
+            for row in reader:
+                yield row
+        return
+
+    if fmt == "parquet":
+        frame = _read_table(file_path, required_columns, input_format="parquet")
+        for record in frame.to_dict(orient="records"):
+            yield record
+        return
+
+    raise ValueError("input_format must be one of: parquet, csv, jsonl")
 
 
 def _write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -345,6 +393,80 @@ def _bundle_manifest_paths(output_dir: Path) -> list[Path]:
     return sorted(files)
 
 
+def _validation_entity_stats(validation: pd.DataFrame) -> dict[str, tuple[int, int]]:
+    stats: dict[str, tuple[int, int]] = {}
+    grouped = validation.groupby("entity_id", sort=False)
+    for entity_id, group in grouped:
+        hit_count = int((group["label"].astype(str) == "hit").sum())
+        total = int(group.shape[0])
+        stats[str(entity_id)] = (total, hit_count)
+    return stats
+
+
+def _state_distribution_from_counts(state_counts: Counter[str]) -> pd.DataFrame:
+    total = max(int(sum(state_counts.values())), 1)
+    rows = [
+        {
+            "state_class": state_class,
+            "row_count": int(count),
+            "row_fraction": float(count) / float(total),
+        }
+        for state_class, count in state_counts.items()
+    ]
+    if not rows:
+        return pd.DataFrame(columns=["state_class", "row_count", "row_fraction"])
+    return pd.DataFrame(rows).sort_values(["row_count", "state_class"], ascending=[False, True]).reset_index(drop=True)
+
+
+def _assay_enrichment_from_counts(
+    state_counts: dict[str, tuple[int, int]],
+    *,
+    global_total: int,
+    global_hits: int,
+) -> pd.DataFrame:
+    if global_total <= 0:
+        return pd.DataFrame(
+            columns=["state_class", "row_count", "hit_count", "hit_rate", "global_hit_rate", "enrichment_over_global"]
+        )
+    global_hit_rate = float(global_hits) / float(global_total)
+    rows = []
+    for state_class, (row_count, hit_count) in state_counts.items():
+        hit_rate = float(hit_count) / float(max(row_count, 1))
+        rows.append(
+            {
+                "state_class": str(state_class),
+                "row_count": int(row_count),
+                "hit_count": int(hit_count),
+                "hit_rate": hit_rate,
+                "global_hit_rate": global_hit_rate,
+                "enrichment_over_global": hit_rate / max(global_hit_rate, 1e-9),
+            }
+        )
+    if not rows:
+        return pd.DataFrame(
+            columns=["state_class", "row_count", "hit_count", "hit_rate", "global_hit_rate", "enrichment_over_global"]
+        )
+    return pd.DataFrame(rows).sort_values(["enrichment_over_global", "row_count"], ascending=[False, False]).reset_index(drop=True)
+
+
+def _failure_mode_from_counts(failure_counts: Counter[tuple[str, str]]) -> pd.DataFrame:
+    total = max(int(sum(failure_counts.values())), 1)
+    rows = [
+        {
+            "qc_flag": str(qc_flag),
+            "state_class": str(state_class),
+            "row_count": int(count),
+            "row_fraction": float(count) / float(total),
+        }
+        for (qc_flag, state_class), count in failure_counts.items()
+    ]
+    if not rows:
+        return pd.DataFrame(columns=["qc_flag", "state_class", "row_count", "row_fraction"])
+    return pd.DataFrame(rows).sort_values(["row_count", "qc_flag", "state_class"], ascending=[False, True, True]).reset_index(
+        drop=True
+    )
+
+
 def build_phase1_report_bundle(
     *,
     registry_path: str | Path,
@@ -362,26 +484,119 @@ def build_phase1_report_bundle(
     disagreement_features_format: str | None = None,
     scorer_outputs_format: str | None = None,
 ) -> Phase1ReportResult:
-    registry = _read_table(registry_path, REGISTRY_COLUMNS, input_format=registry_format)
     validation = _read_table(validation_links_path, VALIDATION_LINK_COLUMNS, input_format=validation_links_format)
     publication_report = _load_json(publication_ranking_report_path)
     locus_report = _load_json(locus_ranking_report_path)
+    validation_stats = _validation_entity_stats(validation)
+    validation_entity_ids = set(validation_stats.keys())
+
+    state_counts: Counter[str] = Counter()
+    failure_counts: Counter[tuple[str, str]] = Counter()
+    validation_by_state_counts: dict[str, list[int]] = defaultdict(lambda: [0, 0])
+    validation_total_labels = 0
+    validation_total_hits = 0
+
+    top_heap: list[tuple[float, str, dict[str, object]]] = []
+    registry_row_count = 0
+    for raw in _iter_table_rows(registry_path, REGISTRY_COLUMNS, input_format=registry_format):
+        registry_row_count += 1
+        state_class = str(raw["state_class"])
+        qc_flag = str(raw["qc_flag"])
+        entity_id = str(raw["entity_id"])
+        ranking_score = _to_float(raw["ranking_score"])
+
+        state_counts[state_class] += 1
+        failure_counts[(qc_flag, state_class)] += 1
+
+        validation_counts = validation_stats.get(entity_id)
+        if validation_counts is not None:
+            total_labels, hit_count = validation_counts
+            validation_by_state_counts[state_class][0] += int(total_labels)
+            validation_by_state_counts[state_class][1] += int(hit_count)
+            validation_total_labels += int(total_labels)
+            validation_total_hits += int(hit_count)
+
+        normalized_row = {column: raw.get(column) for column in REGISTRY_COLUMNS}
+        normalized_row["ranking_score"] = float(ranking_score)
+        heap_item = (float(ranking_score), entity_id, normalized_row)
+        if len(top_heap) < max(int(top_hits_k), 1):
+            heapq.heappush(top_heap, heap_item)
+        else:
+            min_score, min_entity, _ = top_heap[0]
+            if (ranking_score, entity_id) > (min_score, min_entity):
+                heapq.heapreplace(top_heap, heap_item)
+
+    if registry_row_count <= 0:
+        raise ValueError(f"Input table is empty: {Path(registry_path)}")
+
+    top_rows = [item[2] for item in top_heap]
+    top_hits = pd.DataFrame(top_rows, columns=REGISTRY_COLUMNS)
+    if not top_hits.empty:
+        top_hits = top_hits.sort_values(["ranking_score", "entity_id"], ascending=[False, True]).reset_index(drop=True)
+
+    state_distribution = _state_distribution_from_counts(state_counts)
+    assay_enrichment = _assay_enrichment_from_counts(
+        {state_class: (counts[0], counts[1]) for state_class, counts in validation_by_state_counts.items()},
+        global_total=validation_total_labels,
+        global_hits=validation_total_hits,
+    )
+    failure_modes = _failure_mode_from_counts(failure_counts)
 
     disagreement: pd.DataFrame | None = None
     if disagreement_features_path is not None and Path(disagreement_features_path).exists():
-        disagreement = _read_table(
+        disagreement_rows: list[dict[str, object]] = []
+        for raw in _iter_table_rows(
             disagreement_features_path,
             DISAGREEMENT_COLUMNS,
             input_format=disagreement_features_format,
-        )
+        ):
+            entity_id = str(raw["entity_id"])
+            if entity_id not in validation_entity_ids:
+                continue
+            disagreement_rows.append(
+                {
+                    "entity_id": entity_id,
+                    "entity_type": str(raw["entity_type"]),
+                    "score_variance": _to_float(raw["score_variance"]),
+                    "sign_disagreement_count": _to_float(raw["sign_disagreement_count"]),
+                    "rank_disagreement_count": _to_float(raw["rank_disagreement_count"]),
+                    "max_min_delta": _to_float(raw["max_min_delta"]),
+                    "missing_scorer_count": _to_float(raw["missing_scorer_count"]),
+                    "feature_version": str(raw["feature_version"]),
+                }
+            )
+        if disagreement_rows:
+            disagreement = pd.DataFrame(disagreement_rows, columns=DISAGREEMENT_COLUMNS)
 
     scorer_outputs: pd.DataFrame | None = None
     if scorer_outputs_path is not None and Path(scorer_outputs_path).exists():
-        scorer_outputs = _read_table(
-            scorer_outputs_path,
-            SCORER_OUTPUT_COLUMNS,
-            input_format=scorer_outputs_format,
-        )
+        top_entity_ids = set(top_hits["entity_id"].astype(str).tolist()) if not top_hits.empty else set()
+        if top_entity_ids:
+            scorer_rows: list[dict[str, object]] = []
+            for raw in _iter_table_rows(
+                scorer_outputs_path,
+                SCORER_OUTPUT_COLUMNS,
+                input_format=scorer_outputs_format,
+            ):
+                entity_id = str(raw["entity_id"])
+                if entity_id not in top_entity_ids:
+                    continue
+                scorer_rows.append(
+                    {
+                        "entity_id": entity_id,
+                        "entity_type": str(raw["entity_type"]),
+                        "scorer_name": str(raw["scorer_name"]),
+                        "assay_proxy": str(raw["assay_proxy"]),
+                        "context_group": str(raw["context_group"]),
+                        "ref_score": _to_float(raw["ref_score"]),
+                        "alt_score": _to_float(raw["alt_score"]),
+                        "delta_score": _to_float(raw["delta_score"]),
+                        "uncertainty": _to_float(raw["uncertainty"]),
+                        "run_id": str(raw["run_id"]),
+                    }
+                )
+            if scorer_rows:
+                scorer_outputs = pd.DataFrame(scorer_rows, columns=SCORER_OUTPUT_COLUMNS)
 
     ablation_summary: dict[str, Any] | None = None
     if ablation_summary_path is not None and Path(ablation_summary_path).exists():
@@ -395,11 +610,9 @@ def build_phase1_report_bundle(
     tables_dir.mkdir(parents=True, exist_ok=True)
     case_study_dir.mkdir(parents=True, exist_ok=True)
 
-    state_distribution = _state_distribution(registry)
     state_distribution_path = figures_dir / "state_class_distribution.csv"
     state_distribution.to_csv(state_distribution_path, index=False)
 
-    assay_enrichment = _assay_enrichment_by_state(registry, validation)
     assay_enrichment_path = figures_dir / "assay_enrichment_by_state_class.csv"
     assay_enrichment.to_csv(assay_enrichment_path, index=False)
 
@@ -414,7 +627,6 @@ def build_phase1_report_bundle(
     else:
         pd.DataFrame(columns=["disagreement_bucket", "row_count", "hit_rate"]).to_csv(disagreement_path, index=False)
 
-    top_hits = _top_ranked_loci(registry, top_k=max(int(top_hits_k), 1))
     top_hits_path = tables_dir / "top_100_ranked_loci.csv"
     top_hits.to_csv(top_hits_path, index=False)
 
@@ -426,7 +638,6 @@ def build_phase1_report_bundle(
     scorer_ablation_path = tables_dir / "scorer_ablation_summary.csv"
     scorer_ablation.to_csv(scorer_ablation_path, index=False)
 
-    failure_modes = _failure_mode_taxonomy(registry)
     failure_modes_path = tables_dir / "failure_mode_taxonomy.csv"
     failure_modes.to_csv(failure_modes_path, index=False)
 
@@ -445,7 +656,7 @@ def build_phase1_report_bundle(
         "",
         "## Scope",
         "- Context: immune_hematopoietic",
-        f"- Registry rows: {int(registry.shape[0])}",
+        f"- Registry rows: {int(registry_row_count)}",
         f"- Validation rows: {int(validation.shape[0])}",
         "",
         "## Required Figures",

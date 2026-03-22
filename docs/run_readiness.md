@@ -36,6 +36,12 @@ Run command (one-shot):
 - `evaluate-ranking` now streams `feature_matrix` and only keeps validation-linked entities in memory.
 - `shortlist`, `score-fanout`, and `compute-disagreement` now run with streaming/chunked IO paths to avoid full-table materialization.
 
+2026-03-22 update:
+- `run-ablations` now streams `feature_matrix` + `disagreement_features` and only keeps validation-linked `ref_state` entities in memory.
+- `build-registry` now streams all major inputs (`ccre_state`, `validation_link`, `scorer_outputs`, `replacement_candidates`) and writes outputs incrementally.
+- `build-phase1-report` now streams registry/disagreement/scorer tables, computes aggregates online, and keeps only top-k rows plus validation-linked slices.
+- Detailed design + guardrails are documented in [p5_p6_streaming_spec.md](./p5_p6_streaming_spec.md).
+
 Operational caveat:
 - `/data` can fill from historical pipeline run artifacts (`/data/runs`), which can surface as `Errno 28` ("No space left on device") even when memory is healthy.
 - For validation runs, use `PANCCRE_PIPELINE_OUTPUT_ROOT=/tmp/runs` (ephemeral large disk) or prune old `/data/runs/*` artifacts before rerunning.
