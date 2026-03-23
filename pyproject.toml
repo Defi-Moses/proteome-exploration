@@ -19,6 +19,9 @@ dependencies = [
 parquet = [
     "pyarrow>=16.0",
 ]
+test = [
+    "httpx>=0.27",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
